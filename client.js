@@ -21,6 +21,7 @@ window.__ModuleLoader__.load({
     const SHARED_LOGIN_MAX_ENTRIES = 96;
     const SHARED_LOGIN_MAX_VALUE = 200000;
     const TOOLBAR_HEIGHT = 40;
+    const LOW_BALANCE_THRESHOLD = 1;
 
     let appCtx = null;
 
@@ -121,6 +122,8 @@ window.__ModuleLoader__.load({
         collapsed: raw.collapsed === true,
         limit: Number.isFinite(limit) ? Math.max(SESSION_LIMIT_DEFAULT, Math.min(SESSION_LIMIT_MAX, Math.floor(limit))) : SESSION_LIMIT_DEFAULT,
         pins: Array.isArray(raw.pins) ? raw.pins.filter((id) => typeof id === 'string' && id !== '').slice(0, 200) : [],
+        // 头像上方的「今日/总计 token 用量 + 余额」行，默认开，可在「设置 → 通用」里关掉。
+        usageRow: raw.usageRow !== false,
       };
     }
 
@@ -1574,6 +1577,267 @@ window.__ModuleLoader__.load({
       }, 260);
     }
 
+    // ---------- 用量与余额（Host 半折叠会话日志 + 查 DSH 账号余额）----------
+    const USAGE_API = '/dsh-deepseek-webdesk/api/usage';
+    const BALANCE_API = '/dsh-deepseek-webdesk/api/balance';
+    const USAGE_REFRESH_MS = 60_000;
+    const BALANCE_REFRESH_MS = 120_000;
+
+    let usageSnapshot = { usage: null, usageError: '', balance: null, balanceError: '' };
+    const usageListeners = new Set();
+    function emitUsage(patch) {
+      usageSnapshot = Object.assign({}, usageSnapshot, patch);
+      for (const fn of [...usageListeners]) {
+        try {
+          fn();
+        } catch (error) {
+          /* usage listeners are best effort */
+        }
+      }
+    }
+    function subscribeUsage(fn) {
+      usageListeners.add(fn);
+      return () => usageListeners.delete(fn);
+    }
+    function useUsageSnapshot() {
+      return React.useSyncExternalStore(subscribeUsage, () => usageSnapshot, () => usageSnapshot);
+    }
+
+    let usageFetching = false;
+    let balanceFetching = false;
+    let usagePollTimer = null;
+    let balancePollTimer = null;
+    let usagePollRefs = 0;
+
+    async function refreshUsage() {
+      if (usageFetching) return;
+      usageFetching = true;
+      try {
+        const response = await fetch(USAGE_API, { credentials: 'same-origin', cache: 'no-store' });
+        const payload = response.ok ? await response.json().catch(() => null) : null;
+        if (payload !== null && typeof payload === 'object' && payload.ok === true) emitUsage({ usage: payload, usageError: '' });
+        else emitUsage({ usageError: (payload && typeof payload.error === 'string' ? payload.error : '') || 'usage-unavailable' });
+      } catch (error) {
+        emitUsage({ usageError: String((error && error.message) || error) });
+      } finally {
+        usageFetching = false;
+      }
+    }
+
+    async function refreshBalance() {
+      if (balanceFetching) return;
+      balanceFetching = true;
+      try {
+        const locale = (document.documentElement.getAttribute('lang') || navigator.language || 'zh-CN').slice(0, 16);
+        const tz = -new Date().getTimezoneOffset() * 60;
+        const url = BALANCE_API + '?locale=' + encodeURIComponent(locale) + '&tz=' + tz;
+        const response = await fetch(url, { credentials: 'same-origin', cache: 'no-store' });
+        const payload = response.ok ? await response.json().catch(() => null) : null;
+        if (payload !== null && typeof payload === 'object' && typeof payload.status === 'string') emitUsage({ balance: payload, balanceError: '' });
+        else emitUsage({ balanceError: (payload && typeof payload.error === 'string' ? payload.error : '') || 'balance-unavailable' });
+      } catch (error) {
+        emitUsage({ balanceError: String((error && error.message) || error) });
+      } finally {
+        balanceFetching = false;
+      }
+    }
+
+    function refreshUsageAndBalance() {
+      void refreshUsage();
+      void refreshBalance();
+    }
+
+    /** Hold the two pollers while the row is mounted; the last release stops them. */
+    function retainUsagePolling() {
+      usagePollRefs += 1;
+      if (usagePollRefs === 1) {
+        refreshUsageAndBalance();
+        usagePollTimer = window.setInterval(() => { void refreshUsage(); }, USAGE_REFRESH_MS);
+        balancePollTimer = window.setInterval(() => { void refreshBalance(); }, BALANCE_REFRESH_MS);
+      }
+      return () => {
+        usagePollRefs -= 1;
+        if (usagePollRefs > 0) return;
+        window.clearInterval(usagePollTimer);
+        window.clearInterval(balancePollTimer);
+        usagePollTimer = null;
+        balancePollTimer = null;
+      };
+    }
+
+    /** 紧凑 token 数：517 / 12.3K / 1.2M。 */
+    function formatCompactTokens(value) {
+      const number = Number(value);
+      if (!Number.isFinite(number) || number <= 0) return '0';
+      if (number < 1000) return String(Math.round(number));
+      const units = ['K', 'M', 'B', 'T'];
+      let scaled = number;
+      let index = -1;
+      while (scaled >= 1000 && index < units.length - 1) {
+        scaled /= 1000;
+        index += 1;
+      }
+      return String(scaled >= 100 ? Math.round(scaled) : Math.round(scaled * 10) / 10) + units[index];
+    }
+
+    /** 精确 token 数，千分位分组。 */
+    function formatExactTokens(value) {
+      const number = Number(value);
+      return Number.isFinite(number) ? Math.round(number).toLocaleString('en-US') : '0';
+    }
+
+    /** 平台网页同款货币格式：两位小数，正的小额显示 <0.01。 */
+    function formatBalanceAmount(amount, currency) {
+      const symbol = currency === 'USD' ? '$' : '¥';
+      const number = Number(amount);
+      if (!Number.isFinite(number)) return symbol + '—';
+      const magnitude = Math.abs(number);
+      const body = magnitude === 0 ? '0.00' : magnitude < 0.01 ? '<0.01' : magnitude.toFixed(2);
+      return (number < 0 ? '-' : '') + symbol + body;
+    }
+
+    function walletTotal(wallet) {
+      const normal = Number(wallet.balance);
+      const bonus = Number(wallet.bonus);
+      return (Number.isFinite(normal) ? normal : 0) + (Number.isFinite(bonus) ? bonus : 0);
+    }
+
+    /** 余额低于 1 元（每个币种单独判断）时整行变红提示。 */
+    function balanceIsLow(balance) {
+      if (balance === null || typeof balance !== 'object' || balance.status !== 'ready') return false;
+      if (!Array.isArray(balance.wallets) || balance.wallets.length === 0) return false;
+      return balance.wallets.some((wallet) => walletTotal(wallet) < LOW_BALANCE_THRESHOLD);
+    }
+
+    function usageTooltipLines(usage) {
+      const lines = [];
+      const line = (label, row) =>
+        `${label}：输入 ${formatExactTokens(row.input)} · 输出 ${formatExactTokens(row.output)} · 缓存读 ${formatExactTokens(row.cacheRead)} · 合计 ${formatExactTokens(row.total)}`;
+      if (usage && usage.today && usage.total) {
+        lines.push(line('今日', usage.today));
+        lines.push(line('总计', usage.total));
+      }
+      const updated = Number(usage && usage.at);
+      if (Number.isFinite(updated) && updated > 0) {
+        const clock = new Date(updated).toLocaleTimeString('zh-CN', { hour: '2-digit', minute: '2-digit' });
+        lines.push('更新于 ' + clock + ' · 点击刷新');
+      }
+      return lines;
+    }
+
+    function balanceTooltipLines(balance) {
+      const lines = [];
+      if (balance === null || typeof balance !== 'object') return lines;
+      if (balance.status === 'signed-out') return ['余额：未登录 DeepSeek 账号'];
+      if (balance.status !== 'ready') return ['余额：读取失败'];
+      if (!Array.isArray(balance.wallets) || balance.wallets.length === 0) return ['余额：无钱包数据'];
+      for (const wallet of balance.wallets) {
+        lines.push(
+          '余额：' +
+            formatBalanceAmount(walletTotal(wallet), wallet.currency) +
+            '（充值 ' +
+            formatBalanceAmount(wallet.balance, wallet.currency) +
+            ' + 赠金 ' +
+            formatBalanceAmount(wallet.bonus, wallet.currency) +
+            '）',
+        );
+      }
+      if (balanceIsLow(balance)) lines.push('余额低于 ¥' + LOW_BALANCE_THRESHOLD + '，请及时充值');
+      return lines;
+    }
+
+    function UsageSegment({ label, value, bad }) {
+      return h(
+        'span',
+        { className: 'dws-usage-seg' + (bad ? ' bad' : '') },
+        h('span', { className: 'dws-usage-label' }, label),
+        h('span', { className: 'dws-usage-value' }, value),
+      );
+    }
+
+    /** 侧栏底部账号头像上方的一行：今日/总计 token 用量与 DeepSeek 余额。 */
+    function UsageBalanceRow() {
+      const prefs = useUiPrefs();
+      const current = useUsageSnapshot();
+      const visible = prefs.usageRow !== false;
+      React.useEffect(() => (visible ? retainUsagePolling() : undefined), [visible]);
+      React.useEffect(() => {
+        if (!visible) return undefined;
+        const onFocus = () => refreshUsageAndBalance();
+        window.addEventListener('focus', onFocus);
+        return () => window.removeEventListener('focus', onFocus);
+      }, [visible]);
+      if (!visible) return null;
+
+      const usage = current.usage;
+      const usageBad = usage === null && current.usageError !== '';
+      const todayText = usage !== null && usage.today ? formatCompactTokens(usage.today.total) : '—';
+      const totalText = usage !== null && usage.total ? formatCompactTokens(usage.total.total) : '—';
+
+      const balance = current.balance;
+      const balanceBad =
+        current.balanceError !== '' ||
+        (balance !== null && typeof balance === 'object' && balance.status !== 'ready' && balance.status !== 'signed-out');
+      let balanceText = '—';
+      if (balance !== null && typeof balance === 'object') {
+        if (balance.status === 'signed-out') balanceText = '未登录';
+        else if (balance.status === 'ready' && Array.isArray(balance.wallets) && balance.wallets.length > 0) {
+          balanceText = balance.wallets.map((wallet) => formatBalanceAmount(walletTotal(wallet), wallet.currency)).join(' + ');
+        }
+      }
+      const low = balanceIsLow(balance);
+      const tooltip = usageTooltipLines(usage).concat(balanceTooltipLines(balance)).join('\n');
+      return h(
+        'button',
+        {
+          type: 'button',
+          className: 'dws-usage-bar' + (low ? ' low' : ''),
+          title: tooltip !== '' ? tooltip : '今日/总计 token 用量与 DeepSeek 余额',
+          'aria-label': '今日/总计 token 用量与 DeepSeek 余额，点击刷新',
+          onClick: () => {
+            emitUsage({ usageError: '', balanceError: '' });
+            refreshUsageAndBalance();
+          },
+        },
+        h(UsageSegment, { label: '今日', value: todayText, bad: usageBad }),
+        h('span', { className: 'dws-usage-dot' }, '·'),
+        h(UsageSegment, { label: '总计', value: totalText, bad: usageBad }),
+        h('span', { className: 'dws-usage-dot' }, '·'),
+        h(UsageSegment, { label: '余额', value: balanceText, bad: balanceBad }),
+      );
+    }
+
+    function UsageSettingsRow() {
+      const prefs = useUiPrefs();
+      const enabled = prefs.usageRow !== false;
+      return h(
+        'div',
+        { className: 'dws-set-row' },
+        h(
+          'div',
+          { className: 'dws-set-copy' },
+          h('div', { className: 'dws-set-title' }, '侧栏显示用量与余额'),
+          h(
+            'div',
+            { className: 'dws-set-desc' },
+            '在左侧栏账号头像上方显示一行「今日 token 用量 · 总计 token 用量 · DeepSeek 余额」；悬停看输入/输出/缓存读明细与充值/赠金拆分，点一下立即刷新，余额低于 ¥' + LOW_BALANCE_THRESHOLD + ' 时变红。',
+          ),
+        ),
+        h(
+          'button',
+          {
+            type: 'button',
+            role: 'switch',
+            'aria-checked': enabled ? 'true' : 'false',
+            'aria-label': '侧栏显示用量与余额',
+            className: 'dws-switch' + (enabled ? ' on' : ''),
+            onClick: () => updateUiPrefs({ usageRow: !enabled }),
+          },
+          h('span', { className: 'dws-switch-knob' }),
+        ),
+      );
+    }
+
     function formatSessionTime(seconds) {
       const value = Number(seconds);
       if (!Number.isFinite(value) || value <= 0) return '';
@@ -1750,6 +2014,7 @@ window.__ModuleLoader__.load({
         }, SESSION_LIST_REFRESH_MS);
         return () => window.clearInterval(timer);
       }, []);
+      // 56px 轨道只放一个图标按钮。
       if (!wide) {
         return h(
           'button',
@@ -1831,6 +2096,24 @@ window.__ModuleLoader__.load({
             );
           }
         }
+        if (list.hasMore) {
+          // 「显示更多」就是列表内容的最后一行，跟着列表一起滚动，不固定。
+          children.push(
+            h(
+              'button',
+              {
+                key: 'more',
+                type: 'button',
+                className: 'dws-foot-more',
+                onClick: () => {
+                  updateUiPrefs({ limit: Math.min(SESSION_LIMIT_MAX, uiPrefs.limit + 20) });
+                  void refreshSessionList();
+                },
+              },
+              '显示更多',
+            ),
+          );
+        }
       }
       return h(
         'div',
@@ -1840,19 +2123,26 @@ window.__ModuleLoader__.load({
           { className: 'dws-foot-head' },
           h(
             'div',
-            { className: 'dws-foot-title' },
+            {
+              className: 'dws-foot-title',
+              role: 'button',
+              tabIndex: 0,
+              title: prefs.collapsed ? '展开会话' : '收起会话',
+              'aria-label': prefs.collapsed ? '展开会话' : '收起会话',
+              'aria-expanded': prefs.collapsed ? 'false' : 'true',
+              onClick: () => updateUiPrefs({ collapsed: prefs.collapsed !== true }),
+              onKeyDown: (event) => {
+                if (event.key === 'Enter' || event.key === ' ') {
+                  event.preventDefault();
+                  updateUiPrefs({ collapsed: prefs.collapsed !== true });
+                }
+              },
+            },
             h(ChatBubbleGlyph, { size: 14 }),
             h('span', { className: 'dws-foot-title-text' }, '会话'),
             h(
-              'button',
-              {
-                type: 'button',
-                className: 'dws-foot-chevron' + (prefs.collapsed === true ? ' shown' : ''),
-                title: prefs.collapsed ? '展开会话' : '收起会话',
-                'aria-label': prefs.collapsed ? '展开会话' : '收起会话',
-                'aria-expanded': prefs.collapsed ? 'false' : 'true',
-                onClick: () => updateUiPrefs({ collapsed: prefs.collapsed !== true }),
-              },
+              'span',
+              { className: 'dws-foot-chevron' + (prefs.collapsed === true ? ' shown' : ''), 'aria-hidden': 'true' },
               h(ChevronGlyph, { size: 12, open: prefs.collapsed !== true }),
             ),
           ),
@@ -1863,20 +2153,8 @@ window.__ModuleLoader__.load({
           ),
         ),
         prefs.collapsed ? null : h('div', { className: 'dws-foot-list' }, children),
-        !prefs.collapsed && list.hasMore
-          ? h(
-              'button',
-              {
-                type: 'button',
-                className: 'dws-foot-more',
-                onClick: () => {
-                  updateUiPrefs({ limit: Math.min(SESSION_LIMIT_MAX, uiPrefs.limit + 20) });
-                  void refreshSessionList();
-                },
-              },
-              '显示更多',
-            )
-          : null,
+        // 账号头像上方那一行：今日/总计 token 用量与 DeepSeek 余额。
+        h(UsageBalanceRow),
         pendingDelete === null
           ? null
           : h(
@@ -2163,9 +2441,11 @@ window.__ModuleLoader__.load({
       '.dws-toast{position:absolute;left:50%;bottom:20px;transform:translateX(-50%);padding:7px 14px;border-radius:999px;background:rgba(20,22,26,.86);color:#fff;font-size:12px;line-height:18px;z-index:2;pointer-events:none;max-width:80%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
       '.dws-foot-head{-webkit-app-region:drag;user-select:none}',
       '.dws-foot-head button{-webkit-app-region:no-drag}',
-      '.dws-foot-title{display:inline-flex;align-items:center;gap:4px;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:13px;line-height:20px;padding:4px 6px;margin-left:-6px;border-radius:6px;cursor:default}',
+      '.dws-foot-title{display:inline-flex;align-items:center;gap:4px;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:13px;line-height:20px;padding:4px 6px;margin-left:-6px;border-radius:6px;cursor:pointer;-webkit-app-region:no-drag}',
+      '.dws-foot-title:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+      '.dws-foot-title:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4d6bfe));outline-offset:-2px}',
       '.dws-foot-title-text{margin-left:6px}',
-      '.dws-foot-chevron{appearance:none;border:0;background:transparent;display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;margin-left:2px;padding:0;color:inherit;opacity:0;cursor:pointer;transition:opacity .12s ease}',
+      '.dws-foot-chevron{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;margin-left:2px;color:inherit;opacity:0;transition:opacity .12s ease;pointer-events:none}',
       '.dws-foot-head:hover .dws-foot-chevron,.dws-foot-chevron.shown{opacity:.7}',
       '.dws-hotkey-actions{display:flex;align-items:center;gap:10px;flex:none}',
       '.dws-hotkey-recording{color:var(--dsw-alias-state-business-primary,#4d6bfe);font-size:12px;line-height:18px}',
@@ -2202,6 +2482,16 @@ window.__ModuleLoader__.load({
       '.dws-foot-pin:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
       '.dws-foot-more{appearance:none;flex:0 0 auto;border:0;background:transparent;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:12px;line-height:18px;padding:7px 8px 7px 20px;text-align:left;border-radius:8px;cursor:pointer}',
       '.dws-foot-more:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
+      '.dws-usage-bar{box-sizing:border-box;width:100%;flex:none;margin-top:auto;display:flex;align-items:center;justify-content:space-between;gap:6px;min-height:26px;padding:2px 8px;border:0;border-radius:var(--dsw-radius-md,8px);background:transparent;color:var(--dsw-alias-label-tertiary,#8b93a3);font-family:inherit;font-size:11px;line-height:16px;text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden}',
+      '.dws-usage-bar:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06));color:var(--dsw-alias-label-secondary,#545b66)}',
+      '.dws-usage-bar:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4d6bfe));outline-offset:-2px}',
+      '.dws-usage-bar.low{color:var(--dsw-alias-state-error-primary,#dc2626)}',
+      '.dws-usage-bar.low .dws-usage-value{color:var(--dsw-alias-state-error-primary,#dc2626)}',
+      '.dws-usage-seg{display:inline-flex;align-items:baseline;gap:3px;min-width:0}',
+      '.dws-usage-seg.bad .dws-usage-value{color:var(--dsw-alias-state-error-primary,#dc2626)}',
+      '.dws-usage-label{color:var(--dsw-alias-label-tertiary,#8b93a3);flex:none}',
+      '.dws-usage-value{color:var(--dsw-alias-label-secondary,#545b66);font-variant-numeric:tabular-nums;font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis}',
+      '.dws-usage-dot{color:var(--dsw-alias-label-quaternary,#c1c6cf);flex:none}',
       '@keyframes dws-spin{to{transform:rotate(360deg)}}',
     ].join('\n');
 
@@ -2236,6 +2526,23 @@ window.__ModuleLoader__.load({
           return undefined;
         }
       }, 'dsh-deepseek-webdesk: settings row');
+      ctx.effect(() => {
+        try {
+          return ctx.slots.inject('settings.general.item', () =>
+            ctx.slots.register(
+              {
+                name: 'settings.general.item',
+                id: 'dsh-deepseek-webdesk-usage-row',
+                order: 31,
+              },
+              UsageSettingsRow,
+            ),
+          );
+        } catch (error) {
+          console.warn('[dsh-deepseek-webdesk] settings.general.item (usage) 槽位不可用：', error);
+          return undefined;
+        }
+      }, 'dsh-deepseek-webdesk: usage settings row');
       // 侧边栏底部的「会话」区：位于工作区列表下方、设置之上（sidebar.footer.action）。
       ctx.effect(() => {
         try {

@@ -4,7 +4,7 @@
 
 [![dsh-plugin](https://img.shields.io/badge/topic-dsh--plugin-4D6BFE)](https://github.com/topics/dsh-plugin)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
-[![tests](https://img.shields.io/badge/tests-3%20passed-brightgreen)](#开发)
+[![tests](https://img.shields.io/badge/tests-14%20passed-brightgreen)](#开发)
 
 ![DeepSeek 网页工作台：左侧是网页版会话列表，右侧是完整网页对话](docs/screenshot-desk.png)
 
@@ -18,7 +18,11 @@ DSH（DeepSeek Harness）桌面端插件。安装后，左侧栏「工作区」�
 
 - **侧栏会话列表**：网页版历史会话（标题 + 时间），20 秒自动刷新。
   - 悬停行显示 **置顶 / 删除**（与 DSH 工作区会话行同款交互；置顶同步 DeepSeek 云端，删除有确认弹窗）。
-  - 点「会话」标题折叠/展开；底部「显示更多」每次多加载 20 条。
+  - 点「会话」标题折叠/展开；「显示更多」是会话列表内容的最后一行（跟着列表滚动，不固定），每次多加载 20 条。
+- **用量与余额行（可开关）**：左侧栏账号头像/昵称正上方一行：`今日 312M · 总计 312M · 余额 ¥0.98`。
+  - token 用量由 Host 半折叠本机全部会话日志得出，口径与对话页右下角用量 pill 一致（含缓存读 token）；悬停看输入/输出/缓存读/合计明细，点一下立即刷新，60 秒自动刷新。
+  - 余额取自当前 DSH 登录的 DeepSeek 账号（充值余额 + 赠金，按币种展示；悬停看拆分），120 秒自动刷新；**余额低于 ¥1 时整行数值变红**。
+  - 在 **设置 → 通用 → 侧栏显示用量与余额** 里开关；侧栏收起成 56px 轨道时自动隐藏。
 - **完整网页对话**：点会话进入独立 DeepSeek 页，页面铺满主内容区。
   - 顶部是插件自己的头部：`DeepSeek · 当前会话标题` + 刷新 / 接力 / 在浏览器打开 / 右侧栏。
   - 中文界面（DSH 渲染进程默认 `--lang=en-US`，插件会强制 DeepSeek 网页使用 `zh_CN`）。
@@ -28,7 +32,7 @@ DSH（DeepSeek Harness）桌面端插件。安装后，左侧栏「工作区」�
   - **插入到刚才的任务**：切回原会话，把内容作为草稿插入输入框并聚焦（失败复制到剪贴板）。
   - **新建任务继续**：在当前工作区新建一个 Harness 任务，内容直接填进新任务输入框。
 - **单选中态**：进入 DeepSeek 页时工作区会话会取消选中，不会出现两个选中状态；点工作区任务即离开 DeepSeek 页。
-- **可拖动窗口**：DeepSeek 页顶部工具条、侧栏「会话」标题行都是窗口拖动区域（按住拖动即可移动整个 DSH 窗口，不再选中文字）；「会话」的收起/展开箭头、`＋` 等按钮仍可点击。
+- **可拖动窗口**：DeepSeek 页顶部工具条、侧栏「会话」标题行的空白处都是窗口拖动区域（按住拖动即可移动整个 DSH 窗口）；「会话」标题文字区本身可点击收起/展开列表，`＋` 等按钮正常点击。
 - **全局唤出快捷键（可选附加组件）**：在 **设置 → 通用 → 全局唤出 DSH** 里开启/关闭、点「修改」录制新组合；默认 **macOS `⌥ Space`、Windows `Alt+Space`**。任意页面按一下唤出 DSH，再按一下隐藏。
   - `⌘W` 关掉窗口后也能唤回：助手检测 DSH 是否有可见窗口，没有就用 `dsh://open` 让 DSH 重新创建/聚焦主窗口（已实测）。
   - 实现：插件 Host 会编译并启动一个本地原生小助手（macOS 用 Swift 的 Carbon 全局热键，Windows 用 PowerShell + WinForms 全局热键），由它显示/隐藏整个 DSH 窗口；不需要给 DSH 主程序提权，也不依赖系统“聚焦”功能。
@@ -65,15 +69,15 @@ dsh plugin --profile desktop add github:zneoxlab/dsh-deepseek-webdesk
 
 ```sh
 cd dsh-deepseek-webdesk
-npm test        # node --test，Host 映射 + 客户端槽位注册
+npm test        # node --test，Host 映射 + 用量折叠/余额 + 客户端槽位注册
 ```
 
 文件结构：
 
 | 文件 | 作用 |
 | --- | --- |
-| `client.js` | 侧栏会话列表、主区域网页页、内嵌浏览器租约、共享登录、中文强制、接力 |
-| `index.js` | Host 半：读网页登录账号、拉取/置顶/删除 DeepSeek 会话列表的 API |
+| `client.js` | 侧栏会话列表、用量与余额行、主区域网页页、内嵌浏览器租约、共享登录、中文强制、接力 |
+| `index.js` | Host 半：读网页登录账号、拉取/置顶/删除 DeepSeek 会话列表的 API；折叠会话日志出今日/总计 token 用量；经 DSH 账号服务查 DeepSeek 余额 |
 | `cordis.patch.yml` / `package.json` | DSH bundle 与客户端模块清单 |
 | `locale/*.json` | 插件管理器中显示的名称与说明 |
 | `docs/` | 截图（会话标题已打码） |

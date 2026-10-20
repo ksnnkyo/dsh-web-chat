@@ -1,7 +1,7 @@
 import { spawn, spawnSync } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 
 /**
  * Host half of the DeepSeek web session bundle.
@@ -24,6 +24,10 @@ const SESSION_VALUE_LIMIT = 200_000;
 const SESSION_ENTRY_LIMIT = 120;
 const HOTKEY_FILE_NAME = 'hotkey.json';
 const HELPER_DIR_NAME = 'helper';
+const USAGE_CACHE_DIR = 'deepseek-webdesk';
+const USAGE_CACHE_FILE = 'usage-cache.json';
+const USAGE_CACHE_VERSION = 1;
+const BUCKET_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite'];
 const HOTKEY_KEYS = /^([A-Z]|[0-9]|Space|F([1-9]|1[0-2]))$/;
 const HOTKEY_MODIFIERS = ['control', 'alt', 'shift', 'meta'];
 const MAC_KEYCODES = {
@@ -636,7 +640,256 @@ function hotkeyStatus() {
   };
 }
 
+// ---------- 用量与余额：折叠会话日志 + 查 DSH 账号余额 ----------
+
+function usageCachePath() {
+  return join(deskDir(), USAGE_CACHE_FILE);
+}
+
+/** Local calendar day key (`YYYY-MM-DD`) for an epoch-millisecond timestamp. */
+export function dayKey(time) {
+  const date = new Date(typeof time === 'number' && Number.isFinite(time) ? time : Date.now());
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+}
+
+export function emptyBuckets() {
+  return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0 };
+}
+
+function count(value) {
+  return typeof value === 'number' && Number.isFinite(value) && value > 0 ? Math.floor(value) : 0;
+}
+
+/** Provider usage sample of one event, or undefined. */
+export function usageOfEvent(event) {
+  if (event === null || typeof event !== 'object') return undefined;
+  if (event.type !== 'assistant/message' && event.type !== 'assistant/attempt') return undefined;
+  const data = event.data;
+  if (data === null || typeof data !== 'object') return undefined;
+  if (data.usage !== undefined && data.usage !== null && typeof data.usage === 'object') return data.usage;
+  const stream = data.stream;
+  if (!Array.isArray(stream)) return undefined;
+  for (let index = stream.length - 1; index >= 0; index -= 1) {
+    const chunk = stream[index]?.chunk;
+    if (chunk !== null && typeof chunk === 'object' && chunk.type === 'usage' && chunk.usage !== null && typeof chunk.usage === 'object') return chunk.usage;
+  }
+  return undefined;
+}
+
+export function bucketsFromUsage(usage) {
+  return { input: count(usage.inputTokens), output: count(usage.outputTokens), cacheRead: count(usage.cacheReadTokens), cacheWrite: count(usage.cacheWriteTokens) };
+}
+
+function bucketsEqual(left, right) {
+  return BUCKET_KEYS.every((key) => left[key] === right[key]);
+}
+
+function bucketsTotal(buckets) {
+  return buckets.input + buckets.output + buckets.cacheRead + buckets.cacheWrite;
+}
+
+export function createUsageState() {
+  return { totals: emptyBuckets(), days: Object.create(null), last: null };
+}
+
+/**
+ * Fold one session's durable events into per-day + total usage. Mirrors the
+ * shipped `tokenUsage` projection fold: a later sample of the same turn+step
+ * replaces the earlier one, `llm/retry-started` closes that slot, and each
+ * accepted sample is attributed to the local day of its event.
+ */
+export function foldSessionEvents(events, state) {
+  const next = state ?? createUsageState();
+  if (!Array.isArray(events)) return next;
+  for (const event of events) {
+    if (event === null || typeof event !== 'object') continue;
+    if (event.type === 'llm/retry-started') {
+      const data = event.data;
+      if (next.last !== null && data !== null && typeof data === 'object' && next.last.turn === data.turn && next.last.step === data.step) next.last = null;
+      continue;
+    }
+    const usage = usageOfEvent(event);
+    if (usage === undefined) continue;
+    const data = event.data;
+    const turn = data.turn;
+    const step = data.step;
+    const buckets = bucketsFromUsage(usage);
+    const previous = next.last !== null && next.last.turn === turn && next.last.step === step ? next.last.buckets : null;
+    if (previous !== null && bucketsEqual(previous, buckets)) continue;
+    for (const key of BUCKET_KEYS) next.totals[key] = Math.max(0, next.totals[key] - (previous === null ? 0 : previous[key])) + buckets[key];
+    const day = dayKey(event.time);
+    const dayBuckets = next.days[day] ?? emptyBuckets();
+    for (const key of BUCKET_KEYS) dayBuckets[key] = Math.max(0, dayBuckets[key] - (previous === null ? 0 : previous[key])) + buckets[key];
+    next.days[day] = dayBuckets;
+    next.last = { turn, step, buckets };
+  }
+  return next;
+}
+
+function addBuckets(target, source) {
+  for (const key of BUCKET_KEYS) target[key] += source !== null && typeof source === 'object' ? count(source[key]) : 0;
+}
+
+/** Aggregate cached per-session states into today's and all-time totals. */
+export function summarizeUsage(sessions, now = Date.now()) {
+  const today = emptyBuckets();
+  const total = emptyBuckets();
+  const todayKey = dayKey(now);
+  const rows = sessions !== null && typeof sessions === 'object' ? Object.values(sessions) : [];
+  for (const row of rows) {
+    if (row === null || typeof row !== 'object') continue;
+    addBuckets(total, row.totals);
+    addBuckets(today, row.days?.[todayKey] ?? null);
+  }
+  return {
+    today: { ...today, total: bucketsTotal(today) },
+    total: { ...total, total: bucketsTotal(total) },
+    sessionCount: rows.length,
+  };
+}
+
+function loadUsageCache() {
+  try {
+    const raw = JSON.parse(readFileSync(usageCachePath(), 'utf8'));
+    if (raw === null || typeof raw !== 'object' || raw.version !== USAGE_CACHE_VERSION || raw.sessions === null || typeof raw.sessions !== 'object') return Object.create(null);
+    const sessions = Object.create(null);
+    for (const [id, row] of Object.entries(raw.sessions)) {
+      if (typeof id !== 'string' || row === null || typeof row !== 'object' || typeof row.revision !== 'string') continue;
+      const totals = emptyBuckets();
+      addBuckets(totals, row.totals);
+      const days = Object.create(null);
+      if (row.days !== null && typeof row.days === 'object') {
+        for (const [day, buckets] of Object.entries(row.days)) {
+          if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) continue;
+          const next = emptyBuckets();
+          addBuckets(next, buckets);
+          days[day] = next;
+        }
+      }
+      sessions[id] = { revision: row.revision, totals, days };
+    }
+    return sessions;
+  } catch {
+    return Object.create(null);
+  }
+}
+
+function saveUsageCache(sessions) {
+  try {
+    mkdirSync(dirname(usageCachePath()), { recursive: true });
+    const temporary = usageCachePath() + '.' + process.pid + '.tmp';
+    writeFileSync(temporary, JSON.stringify({ version: USAGE_CACHE_VERSION, sessions }), 'utf8');
+    renameSync(temporary, usageCachePath());
+  } catch (error) {
+    /* usage cache persistence is best effort */
+  }
+}
+
+/**
+ * Refresh the per-session usage cache from the durable session store. Sessions
+ * whose persistence revision is unchanged are kept; only changed logs are read.
+ */
+export async function refreshUsage(persistence, previous) {
+  const snapshots = await persistence.list();
+  const next = Object.create(null);
+  let changed = false;
+  for (const snapshot of Array.isArray(snapshots) ? snapshots : []) {
+    const id = snapshot?.header?.id;
+    if (typeof id !== 'string' || id === '') continue;
+    const revision = typeof snapshot.revision === 'string' ? snapshot.revision : '';
+    const cached = previous[id];
+    if (cached !== undefined && cached.revision === revision) {
+      next[id] = cached;
+      continue;
+    }
+    if (snapshot.formatStatus === 'migration-required') {
+      if (cached !== undefined) next[id] = { ...cached, revision };
+      changed = true;
+      continue;
+    }
+    let events;
+    let reader;
+    try {
+      reader = await persistence.open(id, 'read');
+      events = (await reader.read())?.events;
+    } catch (error) {
+      if (cached !== undefined) next[id] = cached;
+      continue;
+    } finally {
+      try {
+        await reader?.close?.();
+      } catch {
+        /* closing a read handle is best effort */
+      }
+    }
+    const state = foldSessionEvents(events, createUsageState());
+    next[id] = { revision, totals: state.totals, days: state.days };
+    changed = true;
+  }
+  if (!changed && Object.keys(previous).length !== Object.keys(next).length) changed = true;
+  return { sessions: next, changed };
+}
+
+/** Client identity headers the account service derives from one caller. */
+function accountClientMetadata(url) {
+  const version = typeof process.env.DSH_CLIENT_VERSION === 'string' && process.env.DSH_CLIENT_VERSION !== '' ? process.env.DSH_CLIENT_VERSION : '0.0.0';
+  const locale = url.searchParams.get('locale') || 'zh-CN';
+  const rawTz = Number(url.searchParams.get('tz'));
+  const timezoneOffsetSeconds = Number.isFinite(rawTz) ? rawTz : -new Date().getTimezoneOffset() * 60;
+  return { version, locale, timezoneOffsetSeconds };
+}
+
+/** Read the Platform recharge-wallet summary through the account service. */
+export async function readBalance(account, client) {
+  const state = await account.getState();
+  if (state?.status !== 'credential-stored') return { status: 'signed-out' };
+  const result = await account.getBalance(client);
+  if (result === null) return { status: 'signed-out' };
+  if (result?.status !== 'ready') return { status: 'failed' };
+  const wallets = (Array.isArray(result.value) ? result.value : []).map((wallet) => ({ currency: wallet.currency === 'USD' ? 'USD' : 'CNY', balance: String(wallet.balance), bonus: '0' }));
+  for (const wallet of Array.isArray(result.bonusWallets) ? result.bonusWallets : []) {
+    const currency = wallet.currency === 'USD' ? 'USD' : 'CNY';
+    const existing = wallets.find((row) => row.currency === currency);
+    if (existing === undefined) wallets.push({ currency, balance: '0', bonus: String(wallet.balance) });
+    else existing.bonus = String(wallet.balance);
+  }
+  return { status: 'ready', wallets };
+}
+
 export function apply(ctx) {
+  let usage = Object.create(null);
+  let usageAt = 0;
+  let usageError = '';
+  let refreshing = null;
+  try {
+    usage = loadUsageCache();
+  } catch {
+    usage = Object.create(null);
+  }
+  const refresh = async () => {
+    const persistence = ctx.get('sessionPersistence');
+    if (persistence === undefined) {
+      usageError = 'session-persistence-unavailable';
+      usageAt = Date.now();
+      return;
+    }
+    try {
+      const result = await refreshUsage(persistence, usage);
+      usage = result.sessions;
+      usageError = '';
+      if (result.changed) saveUsageCache(usage);
+    } catch (error) {
+      usageError = error !== null && typeof error === 'object' && typeof error.message === 'string' ? error.message : String(error);
+    } finally {
+      usageAt = Date.now();
+      refreshing = null;
+    }
+  };
+  const ensureUsage = () => {
+    if (refreshing !== null) return refreshing;
+    refreshing = refresh();
+    return refreshing;
+  };
   ctx.effect(
     () =>
       ctx.webServer.register({
@@ -718,6 +971,22 @@ export function apply(ctx) {
               }
               startHotkeyHelper();
               sendJson(res, 200, { ok: true, ...hotkeyStatus() });
+              return;
+            }
+            if (req.method === 'GET' && (route === '/usage' || route === '/usage/')) {
+              await ensureUsage();
+              const summary = summarizeUsage(usage);
+              sendJson(res, 200, { ok: usageError === '', ...(usageError === '' ? {} : { error: usageError }), at: usageAt, today: summary.today, total: summary.total, sessionCount: summary.sessionCount });
+              return;
+            }
+            if (req.method === 'GET' && (route === '/balance' || route === '/balance/')) {
+              const account = ctx.get('deepseekAccount');
+              if (account === undefined) {
+                sendJson(res, 200, { ok: false, error: 'account-unavailable' });
+                return;
+              }
+              const result = await readBalance(account, accountClientMetadata(url));
+              sendJson(res, 200, { ok: result.status === 'ready', ...result, at: Date.now() });
               return;
             }
             sendJson(res, 404, { ok: false, error: 'unknown route' });
