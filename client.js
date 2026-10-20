@@ -121,6 +121,7 @@ window.__ModuleLoader__.load({
         collapsed: raw.collapsed === true,
         limit: Number.isFinite(limit) ? Math.max(SESSION_LIMIT_DEFAULT, Math.min(SESSION_LIMIT_MAX, Math.floor(limit))) : SESSION_LIMIT_DEFAULT,
         pins: Array.isArray(raw.pins) ? raw.pins.filter((id) => typeof id === 'string' && id !== '').slice(0, 200) : [],
+        shortcutEnabled: raw.shortcutEnabled !== false,
       };
     }
 
@@ -1324,6 +1325,106 @@ window.__ModuleLoader__.load({
       }, 1500);
     }
 
+    let disposeShortcutCommand = null;
+
+    function toggleWebdeskFromShortcut() {
+      if (pageOpen) closePage();
+      else openPage();
+    }
+
+    function syncShortcutCommand() {
+      if (appCtx === null) return;
+      const shortcuts = appCtx.shortcuts;
+      if (shortcuts === undefined || shortcuts === null || typeof shortcuts.register !== 'function') return;
+      const enabled = uiPrefs.shortcutEnabled !== false;
+      if (enabled && disposeShortcutCommand === null) {
+        try {
+          disposeShortcutCommand = shortcuts.register({
+            id: 'deepseek-webdesk.toggle',
+            label: () => '打开/关闭 DeepSeek 网页工作台',
+            aliases: ['deepseek', 'deepseek webdesk', 'webdesk'],
+            defaults: {
+              'desktop:macos': { code: 'KeyD', modifiers: ['primary', 'shift'] },
+              'desktop:windows': { code: 'KeyD', modifiers: ['primary', 'shift'] },
+              'desktop:linux': { code: 'KeyD', modifiers: ['primary', 'shift'] },
+              'web:macos': { code: 'KeyD', modifiers: ['primary', 'shift'] },
+              'web:windows': { code: 'KeyD', modifiers: ['primary', 'shift'] },
+              'web:linux': { code: 'KeyD', modifiers: ['primary', 'shift'] },
+            },
+            regions: ['page', 'editable', 'terminal'],
+            modals: [],
+            resolve: () => ({ status: 'handled', run: toggleWebdeskFromShortcut }),
+          });
+        } catch (error) {
+          disposeShortcutCommand = null;
+          console.warn('[dsh-deepseek-desk] could not register shortcut:', error);
+        }
+      } else if (!enabled && disposeShortcutCommand !== null) {
+        try {
+          disposeShortcutCommand();
+        } catch (error) {
+          /* disposal is best effort */
+        }
+        disposeShortcutCommand = null;
+      }
+    }
+
+    function shortcutBindingLabel() {
+      if (appCtx === null) return '';
+      try {
+        const catalog = appCtx.shortcuts !== undefined ? appCtx.shortcuts.catalog : undefined;
+        if (catalog === undefined || catalog === null || typeof catalog.getSnapshot !== 'function') return '';
+        const rows = catalog.getSnapshot();
+        const row = Array.isArray(rows) ? rows.find((entry) => entry !== null && entry !== undefined && entry.id === 'deepseek-webdesk.toggle') : undefined;
+        if (row === undefined) return '';
+        if (typeof row.aria === 'string' && row.aria !== '') return row.aria;
+        if (Array.isArray(row.keys)) return row.keys.filter((key) => key !== '+').join('+');
+        return '';
+      } catch (error) {
+        return '';
+      }
+    }
+
+    function ShortcutSettingsRow() {
+      const prefs = useUiPrefs();
+      const [, forceRender] = React.useState(0);
+      React.useEffect(() => {
+        if (appCtx === null) return undefined;
+        const catalog = appCtx.shortcuts !== undefined ? appCtx.shortcuts.catalog : undefined;
+        if (catalog === undefined || catalog === null || typeof catalog.subscribe !== 'function') return undefined;
+        return catalog.subscribe(() => forceRender((value) => value + 1));
+      }, []);
+      const enabled = prefs.shortcutEnabled !== false;
+      const binding = enabled ? shortcutBindingLabel() : '';
+      return h(
+        'div',
+        { className: 'dws-set-row' },
+        h(
+          'div',
+          { className: 'dws-set-copy' },
+          h('div', { className: 'dws-set-title' }, 'DeepSeek 页快捷键'),
+          h(
+            'div',
+            { className: 'dws-set-desc' },
+            '独立开关：启用后可用快捷键快速打开/关闭 DeepSeek 网页工作台；按键可在「设置 → 快捷键」里搜索 "DeepSeek" 修改。',
+          ),
+          enabled && binding !== '' ? h('div', { className: 'dws-set-binding' }, '当前按键：', h('kbd', { className: 'dws-kbd' }, binding)) : null,
+        ),
+        h(
+          'button',
+          {
+            type: 'button',
+            role: 'switch',
+            'aria-checked': enabled ? 'true' : 'false',
+            'aria-label': '启用 DeepSeek 页快捷键',
+            className: 'dws-switch' + (enabled ? ' on' : ''),
+            onClick: () => updateUiPrefs({ shortcutEnabled: !enabled }),
+          },
+          h('span', { className: 'dws-switch-knob' }),
+        ),
+      );
+    }
+
     function openNewConversation() {
       enterWebPanel();
       pendingConversationId = '';
@@ -2006,6 +2107,16 @@ window.__ModuleLoader__.load({
       '.dws-foot-title-text{margin-left:6px}',
       '.dws-foot-chevron{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;margin-left:2px;opacity:0;transition:opacity .12s ease}',
       '.dws-foot-head:hover .dws-foot-chevron,.dws-foot-chevron.shown{opacity:.7}',
+      '.dws-set-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 0;border-bottom:1px solid var(--dsw-alias-border-l1,#eceef1)}',
+      '.dws-set-copy{min-width:0;display:flex;flex-direction:column;gap:4px}',
+      '.dws-set-title{color:var(--dsw-alias-label-primary,#1f2329);font-size:14px;line-height:22px;font-weight:500}',
+      '.dws-set-desc{color:var(--dsw-alias-label-tertiary,#8b93a3);font-size:12px;line-height:18px}',
+      '.dws-set-binding{color:var(--dsw-alias-label-secondary,#545b66);font-size:12px;line-height:18px;display:flex;align-items:center;gap:6px}',
+      '.dws-kbd{display:inline-flex;align-items:center;padding:1px 6px;border-radius:6px;border:1px solid var(--dsw-alias-border-l1,#e0e3e8);background:var(--dsw-alias-bg-layer-2,#f7f8fa);font-family:var(--dsw-alias-font-mono,monospace);font-size:11px;line-height:16px;color:var(--dsw-alias-label-secondary,#545b66)}',
+      '.dws-switch{position:relative;flex:none;width:34px;height:20px;border-radius:999px;border:1px solid var(--dsw-alias-border-l1,#d9dde3);background:var(--dsw-alias-bg-layer-3,#eef1f6);cursor:pointer;padding:0;transition:background .15s ease,border-color .15s ease}',
+      '.dws-switch.on{background:var(--dsw-alias-brand-primary,#4d6bfe);border-color:transparent}',
+      '.dws-switch-knob{position:absolute;top:2px;left:2px;width:14px;height:14px;border-radius:50%;background:#fff;box-shadow:0 1px 2px rgba(0,0,0,.2);transition:transform .15s ease}',
+      '.dws-switch.on .dws-switch-knob{transform:translateX(14px)}',
       '.dws-modal-backdrop{position:fixed;inset:0;z-index:2000;background:rgba(15,17,20,.36);display:flex;align-items:center;justify-content:center;padding:24px}',
       '.dws-modal{width:320px;max-width:calc(100vw - 48px);box-sizing:border-box;padding:18px 18px 14px;border-radius:12px;background:var(--dsw-alias-bg-layer-1,#fff);border:1px solid var(--dsw-alias-border-l1,#e6e8ec);box-shadow:0 18px 48px rgba(0,0,0,.24);color:var(--dsw-alias-label-primary,#1f2329);font-family:inherit}',
       '.dws-modal-title{font-size:15px;font-weight:600;line-height:22px;margin-bottom:8px}',
@@ -2046,6 +2157,39 @@ window.__ModuleLoader__.load({
         },
         'dsh-deepseek-webdesk: styles',
       );
+      // 快捷键（附加小组件）：默认 Mod+Shift+D，可在 DSH 设置 → 快捷键里改键；可在通用设置里独立停用。
+      ctx.effect(() => {
+        syncShortcutCommand();
+        const off = subscribeUiPrefs(() => syncShortcutCommand());
+        return () => {
+          off();
+          if (disposeShortcutCommand !== null) {
+            try {
+              disposeShortcutCommand();
+            } catch (error) {
+              /* disposal is best effort */
+            }
+            disposeShortcutCommand = null;
+          }
+        };
+      }, 'dsh-deepseek-desk: shortcut command');
+      ctx.effect(() => {
+        try {
+          return ctx.slots.inject('settings.general.item', () =>
+            ctx.slots.register(
+              {
+                name: 'settings.general.item',
+                id: 'dsh-deepseek-desk-shortcut',
+                order: 30,
+              },
+              ShortcutSettingsRow,
+            ),
+          );
+        } catch (error) {
+          console.warn('[dsh-deepseek-desk] settings.general.item 槽位不可用：', error);
+          return undefined;
+        }
+      }, 'dsh-deepseek-desk: settings row');
       // 侧边栏底部的「会话」区：位于工作区列表下方、设置之上（sidebar.footer.action）。
       ctx.effect(() => {
         try {
@@ -2128,7 +2272,7 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['slots', 'layout'],
+      inject: ['slots', 'layout', 'shortcuts'],
       apply,
     };
   },

@@ -90,7 +90,7 @@ test('client bundle registers sidebar entry, header menu and persistent overlay 
   plugin.apply(ctx);
 
   const byName = new Map(registered.map((entry) => [entry.options.name, entry]));
-  assert.deepEqual([...byName.keys()].sort(), ['main', 'shell.overlay', 'sidebar.footer.action']);
+  assert.deepEqual([...byName.keys()].sort(), ['main', 'settings.general.item', 'shell.overlay', 'sidebar.footer.action']);
 
   const entry = byName.get('sidebar.footer.action');
   assert.equal(entry.options.id, 'deepseek-web-session-entry');
@@ -99,6 +99,10 @@ test('client bundle registers sidebar entry, header menu and persistent overlay 
   const page = byName.get('main');
   assert.equal(page.options.key, 'deepseek-web-session');
   assert.equal(typeof page.component, 'function');
+
+  const settingsRow = byName.get('settings.general.item');
+  assert.equal(settingsRow.options.id, 'dsh-deepseek-desk-shortcut');
+  assert.equal(typeof settingsRow.component, 'function');
 
   const host = byName.get('shell.overlay');
   assert.equal(host.options.id, 'deepseek-web-session-host');
