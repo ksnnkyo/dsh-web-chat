@@ -29,6 +29,7 @@ DSH（DeepSeek Harness）桌面端插件。安装后，左侧栏「工作区」�
   - **新建任务继续**：在当前工作区新建一个 Harness 任务，内容直接填进新任务输入框。
 - **单选中态**：进入 DeepSeek 页时工作区会话会取消选中，不会出现两个选中状态；点工作区任务即离开 DeepSeek 页。
 - **全局唤出快捷键（可选附加组件）**：在 **设置 → 通用 → 全局唤出 DSH** 里开启/关闭、点「修改」录制新组合；默认 **macOS `⌥ Space`、Windows `Alt+Space`**。任意页面按一下唤出 DSH，再按一下隐藏。
+  - `⌘W` 关掉窗口后也能唤回：助手检测 DSH 是否有可见窗口，没有就用 `dsh://open` 让 DSH 重新创建/聚焦主窗口（已实测）。
   - 实现：插件 Host 会编译并启动一个本地原生小助手（macOS 用 Swift 的 Carbon 全局热键，Windows 用 PowerShell + WinForms 全局热键），由它显示/隐藏整个 DSH 窗口；不需要给 DSH 主程序提权，也不依赖系统“聚焦”功能。
   - 助手二进制只在首次启用时编译到 `~/.dsh/deepseek-webdesk/helper/`（本机），卸载/停用插件后进程退出。
 

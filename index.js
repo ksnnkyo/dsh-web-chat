@@ -407,17 +407,42 @@ let helperPendingRestart = false;
 
 const MAC_HELPER_SOURCE = `import Cocoa
 import Carbon
+import CoreGraphics
 
 let bundleId = "com.deepseek.dsh"
 var hotKeyRef: EventHotKeyRef?
 var handlerRef: EventHandlerRef?
 
+func hasVisibleWindow(_ pid: pid_t) -> Bool {
+  guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else { return false }
+  for info in list {
+    guard let owner = info[kCGWindowOwnerPID as String] as? pid_t, owner == pid else { continue }
+    let layer = info[kCGWindowLayer as String] as? Int ?? 0
+    if layer == 0 { return true }
+  }
+  return false
+}
+
+func reopen(_ app: NSRunningApplication) {
+  if let scheme = URL(string: "dsh://open"), NSWorkspace.shared.open(scheme) { return }
+  if let url = app.bundleURL {
+    let configuration = NSWorkspace.OpenConfiguration()
+    configuration.activates = true
+    NSWorkspace.shared.openApplication(at: url, configuration: configuration) { _, _ in }
+  } else {
+    app.activate(options: [.activateIgnoringOtherApps])
+  }
+}
+
 func toggle() {
   guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first else { return }
-  if app.isActive {
+  let visible = hasVisibleWindow(app.processIdentifier)
+  if app.isHidden || !visible {
+    app.unhide()
+    reopen(app)
+  } else if app.isActive {
     app.hide()
   } else {
-    app.unhide()
     app.activate(options: [.activateIgnoringOtherApps])
   }
 }
