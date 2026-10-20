@@ -1,0 +1,36 @@
+# macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Node
+node_modules/
+.pnpm-store/
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Build / packaging
+dist/
+build/
+out/
+*.tgz
+
+# Local env / secrets
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# Tests / coverage
+coverage/
+.nyc_output/

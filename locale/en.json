@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "DeepSeek Web Desk",
+    "description": "Lists DeepSeek web conversations in the DSH sidebar, opens the full web chat, and hands off to the current or a new task."
+  }
+}

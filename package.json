@@ -1,0 +1,58 @@
+{
+  "name": "dsh-deepseek-desk",
+  "version": "0.8.0",
+  "private": false,
+  "type": "module",
+  "description": "DeepSeek Web Desk for DSH: 在左侧栏拉出 DeepSeek 网页版会话列表，点一条就在主区域打开完整网页对话（复用 DSH 网页登录态、中文界面），并可接力到当前任务或新建任务。",
+  "keywords": [
+    "dsh-plugin",
+    "deepseek",
+    "web-chat",
+    "conversation",
+    "handoff",
+    "cordis-plugin"
+  ],
+  "engines": {
+    "node": ">=24",
+    "dsh": ">=0.2.1-rc.2"
+  },
+  "exports": {
+    ".": "./index.js",
+    "./client": "./client.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "LICENSE",
+    "docs"
+  ],
+  "dsh": {
+    "manifestVersion": 1,
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "immediately": true
+    }
+  },
+  "scripts": {
+    "test": "node --test tests/*.test.mjs"
+  },
+  "author": "zneoxlab",
+  "license": "MIT",
+  "homepage": "https://github.com/zneoxlab/dsh-deepseek-desk",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/zneoxlab/dsh-deepseek-desk.git"
+  },
+  "bugs": {
+    "url": "https://github.com/zneoxlab/dsh-deepseek-desk/issues"
+  }
+}
