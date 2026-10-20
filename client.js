@@ -22,6 +22,7 @@ window.__ModuleLoader__.load({
     const SHARED_LOGIN_MAX_VALUE = 200000;
     const TOOLBAR_HEIGHT = 40;
     const LOW_BALANCE_THRESHOLD = 1;
+    const CRITICAL_BALANCE_THRESHOLD = 0.1;
 
     let appCtx = null;
 
@@ -1702,11 +1703,18 @@ window.__ModuleLoader__.load({
       return (Number.isFinite(normal) ? normal : 0) + (Number.isFinite(bonus) ? bonus : 0);
     }
 
-    /** 余额低于 1 元（每个币种单独判断）时整行变红提示。 */
+    /** 余额低于 1 元（每个币种单独判断）时余额数值加粗提醒。 */
     function balanceIsLow(balance) {
       if (balance === null || typeof balance !== 'object' || balance.status !== 'ready') return false;
       if (!Array.isArray(balance.wallets) || balance.wallets.length === 0) return false;
       return balance.wallets.some((wallet) => walletTotal(wallet) < LOW_BALANCE_THRESHOLD);
+    }
+
+    /** 余额低于 0.1 元（每个币种单独判断）时余额数值变红。 */
+    function balanceIsCritical(balance) {
+      if (balance === null || typeof balance !== 'object' || balance.status !== 'ready') return false;
+      if (!Array.isArray(balance.wallets) || balance.wallets.length === 0) return false;
+      return balance.wallets.some((wallet) => walletTotal(wallet) < CRITICAL_BALANCE_THRESHOLD);
     }
 
     function usageTooltipLines(usage) {
@@ -1742,16 +1750,16 @@ window.__ModuleLoader__.load({
             '）',
         );
       }
-      if (balanceIsLow(balance)) lines.push('余额低于 ¥' + LOW_BALANCE_THRESHOLD + '，请及时充值');
+      if (balanceIsCritical(balance)) lines.push('余额不足 ¥' + CRITICAL_BALANCE_THRESHOLD + '，请及时充值');
       return lines;
     }
 
-    function UsageSegment({ label, value, bad }) {
+    function UsageSegment({ label, value, bad, strong, critical }) {
       return h(
         'span',
         { className: 'dws-usage-seg' + (bad ? ' bad' : '') },
         h('span', { className: 'dws-usage-label' }, label),
-        h('span', { className: 'dws-usage-value' }, value),
+        h('span', { className: 'dws-usage-value' + (strong ? ' strong' : '') + (critical ? ' critical' : '') }, value),
       );
     }
 
@@ -1786,12 +1794,13 @@ window.__ModuleLoader__.load({
         }
       }
       const low = balanceIsLow(balance);
+      const critical = balanceIsCritical(balance);
       const tooltip = usageTooltipLines(usage).concat(balanceTooltipLines(balance)).join('\n');
       return h(
         'button',
         {
           type: 'button',
-          className: 'dws-usage-bar' + (low ? ' low' : ''),
+          className: 'dws-usage-bar',
           title: tooltip !== '' ? tooltip : '今日/总计 token 用量与 DeepSeek 余额',
           'aria-label': '今日/总计 token 用量与 DeepSeek 余额，点击刷新',
           onClick: () => {
@@ -1803,7 +1812,7 @@ window.__ModuleLoader__.load({
         h('span', { className: 'dws-usage-dot' }, '·'),
         h(UsageSegment, { label: '总计', value: totalText, bad: usageBad }),
         h('span', { className: 'dws-usage-dot' }, '·'),
-        h(UsageSegment, { label: '余额', value: balanceText, bad: balanceBad }),
+        h(UsageSegment, { label: '余额', value: balanceText, bad: balanceBad, strong: low, critical }),
       );
     }
 
@@ -1820,7 +1829,7 @@ window.__ModuleLoader__.load({
           h(
             'div',
             { className: 'dws-set-desc' },
-            '在左侧栏账号头像上方显示一行「今日 token 用量 · 总计 token 用量 · DeepSeek 余额」；悬停看输入/输出/缓存读明细与充值/赠金拆分，点一下立即刷新，余额低于 ¥' + LOW_BALANCE_THRESHOLD + ' 时变红。',
+            '在左侧栏账号头像上方显示一行「今日 token 用量 · 总计 token 用量 · DeepSeek 余额」；悬停看输入/输出/缓存读明细与充值/赠金拆分，点一下立即刷新，余额低于 ¥1 时加粗、低于 ¥0.1 时变红。',
           ),
         ),
         h(
@@ -2028,13 +2037,37 @@ window.__ModuleLoader__.load({
         if (list.status === 'loading') {
           children.push(h('div', { key: 'loading', className: 'dws-foot-empty' }, '读取网页会话…'));
         } else if (rows.length === 0) {
-          children.push(
-            h(
-              'div',
-              { key: 'empty', className: 'dws-foot-empty' },
-              list.error === 'not-signed-in' ? '网页版未登录，点＋打开页面登录' : list.error !== '' ? '读取会话失败' : '还没有网页会话',
-            ),
-          );
+          if (list.error === 'not-signed-in') {
+            children.push(
+              h(
+                'button',
+                {
+                  key: 'login',
+                  type: 'button',
+                  className: 'dws-foot-item dws-foot-state-btn',
+                  title: '登录 DeepSeek 网页版',
+                  onClick: () => openNewConversation(),
+                },
+                h('span', { className: 'dws-foot-label' }, '未登录，点击登录'),
+              ),
+            );
+          } else if (list.error !== '') {
+            children.push(
+              h(
+                'button',
+                {
+                  key: 'retry',
+                  type: 'button',
+                  className: 'dws-foot-item dws-foot-state-btn',
+                  title: '重新加载会话列表',
+                  onClick: () => void refreshSessionList(),
+                },
+                h('span', { className: 'dws-foot-label' }, '读取失败，点击重新加载'),
+              ),
+            );
+          } else {
+            children.push(h('div', { key: 'empty', className: 'dws-foot-empty' }, '还没有网页会话'));
+          }
         } else {
           for (const row of rows) {
             children.push(
@@ -2120,24 +2153,24 @@ window.__ModuleLoader__.load({
         { className: 'dws-foot' },
         h(
           'div',
-          { className: 'dws-foot-head' },
+          {
+            className: 'dws-foot-head',
+            role: 'button',
+            tabIndex: 0,
+            title: prefs.collapsed ? '展开会话' : '收起会话',
+            'aria-label': prefs.collapsed ? '展开会话' : '收起会话',
+            'aria-expanded': prefs.collapsed ? 'false' : 'true',
+            onClick: () => updateUiPrefs({ collapsed: prefs.collapsed !== true }),
+            onKeyDown: (event) => {
+              if (event.key === 'Enter' || event.key === ' ') {
+                event.preventDefault();
+                updateUiPrefs({ collapsed: prefs.collapsed !== true });
+              }
+            },
+          },
           h(
             'div',
-            {
-              className: 'dws-foot-title',
-              role: 'button',
-              tabIndex: 0,
-              title: prefs.collapsed ? '展开会话' : '收起会话',
-              'aria-label': prefs.collapsed ? '展开会话' : '收起会话',
-              'aria-expanded': prefs.collapsed ? 'false' : 'true',
-              onClick: () => updateUiPrefs({ collapsed: prefs.collapsed !== true }),
-              onKeyDown: (event) => {
-                if (event.key === 'Enter' || event.key === ' ') {
-                  event.preventDefault();
-                  updateUiPrefs({ collapsed: prefs.collapsed !== true });
-                }
-              },
-            },
+            { className: 'dws-foot-title' },
             h(ChatBubbleGlyph, { size: 14 }),
             h('span', { className: 'dws-foot-title-text' }, '会话'),
             h(
@@ -2148,7 +2181,16 @@ window.__ModuleLoader__.load({
           ),
           h(
             'button',
-            { type: 'button', className: 'dws-foot-add', title: '新建 DeepSeek 网页对话', 'aria-label': '新建会话', onClick: () => openNewConversation() },
+            {
+              type: 'button',
+              className: 'dws-foot-add',
+              title: '新建 DeepSeek 网页对话',
+              'aria-label': '新建会话',
+              onClick: (event) => {
+                event.stopPropagation();
+                openNewConversation();
+              },
+            },
             '＋',
           ),
         ),
@@ -2417,7 +2459,9 @@ window.__ModuleLoader__.load({
       '[class*="footerActions"]{flex:1 1 auto !important;min-height:0;display:flex}',
       '[class*="settingsArea"]{flex:0 0 auto !important}',
       '[class*="treeBody"],[class*="listArea"],[class*="_7514NG_list"]{flex:0 0 auto !important;min-height:0 !important;overflow:visible !important;max-height:none !important}',
-      '.dws-foot-head{display:flex;align-items:center;justify-content:space-between;box-sizing:border-box;height:32px;margin-top:0;padding:0 8px;color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:20px}',
+      '.dws-foot-head{display:flex;align-items:center;justify-content:space-between;box-sizing:border-box;height:32px;margin-top:0;padding:0 8px;color:var(--dsw-alias-label-tertiary);font-size:13px;line-height:20px;border-radius:var(--dsw-radius-md,8px);cursor:pointer;user-select:none}',
+      '.dws-foot-head:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-secondary)}',
+      '.dws-foot-head:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4d6bfe));outline-offset:-2px}',
       '.dws-foot-add{appearance:none;border:0;background:transparent;color:var(--dsw-alias-label-tertiary);width:24px;height:24px;border-radius:var(--dsw-radius-sm,6px);cursor:pointer;font-size:15px;line-height:1;display:inline-flex;align-items:center;justify-content:center}',
       '.dws-foot-add:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
       '.dws-foot-list{display:flex;flex-direction:column;flex:1 1 auto;min-height:0;gap:0;overflow-y:auto}',
@@ -2439,14 +2483,13 @@ window.__ModuleLoader__.load({
       '.dws-hdr-sep{height:1px;margin:4px 6px;background:var(--dsw-alias-border-l1,#e8eaee)}',
       '.dws-hdr-label{padding:6px 10px 2px;color:var(--dsw-alias-label-tertiary);font-size:11px;letter-spacing:.04em}',
       '.dws-toast{position:absolute;left:50%;bottom:20px;transform:translateX(-50%);padding:7px 14px;border-radius:999px;background:rgba(20,22,26,.86);color:#fff;font-size:12px;line-height:18px;z-index:2;pointer-events:none;max-width:80%;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}',
-      '.dws-foot-head{-webkit-app-region:drag;user-select:none}',
       '.dws-foot-head button{-webkit-app-region:no-drag}',
-      '.dws-foot-title{display:inline-flex;align-items:center;gap:4px;color:var(--dsw-alias-label-tertiary);font:inherit;font-size:13px;line-height:20px;padding:4px 6px;margin-left:-6px;border-radius:6px;cursor:pointer;-webkit-app-region:no-drag}',
-      '.dws-foot-title:hover{background:var(--dsw-alias-interactive-bg-hover);color:var(--dsw-alias-label-primary)}',
-      '.dws-foot-title:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4d6bfe));outline-offset:-2px}',
+      '.dws-foot-title{display:inline-flex;align-items:center;gap:4px;color:inherit;font:inherit;font-size:13px;line-height:20px;padding:4px 6px;margin-left:-6px;border-radius:6px;min-width:0}',
       '.dws-foot-title-text{margin-left:6px}',
       '.dws-foot-chevron{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;margin-left:2px;color:inherit;opacity:0;transition:opacity .12s ease;pointer-events:none}',
       '.dws-foot-head:hover .dws-foot-chevron,.dws-foot-chevron.shown{opacity:.7}',
+      '.dws-foot-state-btn{color:var(--dsw-alias-label-tertiary)}',
+      '.dws-foot-state-btn:hover{color:var(--dsw-alias-label-primary)}',
       '.dws-hotkey-actions{display:flex;align-items:center;gap:10px;flex:none}',
       '.dws-hotkey-recording{color:var(--dsw-alias-state-business-primary,#4d6bfe);font-size:12px;line-height:18px}',
       '.dws-set-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 0;border-bottom:1px solid var(--dsw-alias-border-l1,#eceef1)}',
@@ -2485,12 +2528,12 @@ window.__ModuleLoader__.load({
       '.dws-usage-bar{box-sizing:border-box;width:100%;flex:none;margin-top:auto;display:flex;align-items:center;justify-content:space-between;gap:6px;min-height:26px;padding:2px 8px;border:0;border-radius:var(--dsw-radius-md,8px);background:transparent;color:var(--dsw-alias-label-tertiary,#8b93a3);font-family:inherit;font-size:11px;line-height:16px;text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden}',
       '.dws-usage-bar:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06));color:var(--dsw-alias-label-secondary,#545b66)}',
       '.dws-usage-bar:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4d6bfe));outline-offset:-2px}',
-      '.dws-usage-bar.low{color:var(--dsw-alias-state-error-primary,#dc2626)}',
-      '.dws-usage-bar.low .dws-usage-value{color:var(--dsw-alias-state-error-primary,#dc2626)}',
       '.dws-usage-seg{display:inline-flex;align-items:baseline;gap:3px;min-width:0}',
       '.dws-usage-seg.bad .dws-usage-value{color:var(--dsw-alias-state-error-primary,#dc2626)}',
       '.dws-usage-label{color:var(--dsw-alias-label-tertiary,#8b93a3);flex:none}',
       '.dws-usage-value{color:var(--dsw-alias-label-secondary,#545b66);font-variant-numeric:tabular-nums;font-weight:500;min-width:0;overflow:hidden;text-overflow:ellipsis}',
+      '.dws-usage-value.strong{font-weight:700;color:var(--dsw-alias-label-primary,#1f2329)}',
+      '.dws-usage-value.critical{color:var(--dsw-alias-state-error-primary,#dc2626)}',
       '.dws-usage-dot{color:var(--dsw-alias-label-quaternary,#c1c6cf);flex:none}',
       '@keyframes dws-spin{to{transform:rotate(360deg)}}',
     ].join('\n');
