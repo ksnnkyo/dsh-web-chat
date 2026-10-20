@@ -46,17 +46,39 @@ DSH（DeepSeek Harness）桌面端插件。安装后，左侧栏「工作区」�
 
 需要 DSH 桌面端（>= 0.2.1-rc.2）。
 
+### 从插件市场安装（推荐）
+
+DSH 桌面版默认不内置插件市场，需要先启用实验性的「自定义插件市场」：
+
+1. 侧栏 **插件** → **实验性插件** 旁的 **更多** → 找到 **自定义插件市场** 并打开开关；
+2. 打开 **插件 → 发现** → **添加索引源**，填入：
+
+   ```
+   https://zneoxlab.github.io/dsh-deepseek-webdesk/market/index.json
+   ```
+
+   （GitHub Pages 尚未生效时，可先用 raw 地址：
+   `https://raw.githubusercontent.com/zneoxlab/dsh-deepseek-webdesk/main/docs/market/index.json`）
+3. 搜索「DeepSeek 网页工作台」，确认来源是 npm 包 `dsh-deepseek-webdesk` 后安装。
+
+### 从 npm 安装
+
 ```sh
-# 用 DSH 自带 CLI，以 link 方式装进 desktop profile
+dsh plugin --profile desktop add dsh-deepseek-webdesk@0.12.2
+```
+
+### 从 GitHub 安装
+
+```sh
+dsh plugin --profile desktop add git+https://github.com/zneoxlab/dsh-deepseek-webdesk.git
+```
+
+### 本地开发（link）
+
+```sh
 "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh" \
   plugin --profile desktop add \
   "link:/path/to/dsh-deepseek-webdesk"
-```
-
-也可以从 GitHub 安装：
-
-```sh
-dsh plugin --profile desktop add github:zneoxlab/dsh-deepseek-webdesk
 ```
 
 安装完成后重启 DSH（或等插件热加载），左侧栏会出现「会话」。
