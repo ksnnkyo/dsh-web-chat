@@ -1,4 +1,4 @@
-# dsh-deepseek-desk
+# dsh-deepseek-webdesk
 
 > **DeepSeek 网页工作台 for DeepSeek Harness (DSH)** — 把 DeepSeek 网页版的会话列表搬进 DSH 侧栏，点开就是完整的网页对话，并支持把对话接力到当前任务或新建任务。
 
@@ -38,13 +38,13 @@ DSH（DeepSeek Harness）桌面端插件。安装后，左侧栏「工作区」�
 # 用 DSH 自带 CLI，以 link 方式装进 desktop profile
 "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh" \
   plugin --profile desktop add \
-  "link:/path/to/dsh-deepseek-desk"
+  "link:/path/to/dsh-deepseek-webdesk"
 ```
 
 也可以从 GitHub 安装：
 
 ```sh
-dsh plugin --profile desktop add github:zneoxlab/dsh-deepseek-desk
+dsh plugin --profile desktop add github:zneoxlab/dsh-deepseek-webdesk
 ```
 
 安装完成后重启 DSH（或等插件热加载），左侧栏会出现「会话」。
@@ -53,12 +53,12 @@ dsh plugin --profile desktop add github:zneoxlab/dsh-deepseek-desk
 
 - **必需**：DSH 桌面端的内嵌浏览器能力（`globalThis.dshDesktop.browser`）。
 - **可选**：[`dsh-deepseek-web-login`](https://github.com/cv-superding/dsh-deepseek-web-login) —— 提供网页登录态与账号库。装了它，DeepSeek 页打开即登录；没装也能用，在页面里手动登录即可（只是侧栏会话列表读不到）。
-- 插件 **Host 半** 读取 `~/.dsh/web-login/` 下当前账号，调用 DeepSeek 官方接口 `chat_session/fetch_page` 拉会话列表，再通过同源路由 `/dsh-deepseek-desk/api/sessions` 交给客户端渲染；token 只在本机请求头内使用，不落盘、不打印、不上报。
+- 插件 **Host 半** 读取 `~/.dsh/web-login/` 下当前账号，调用 DeepSeek 官方接口 `chat_session/fetch_page` 拉会话列表，再通过同源路由 `/dsh-deepseek-webdesk/api/sessions` 交给客户端渲染；token 只在本机请求头内使用，不落盘、不打印、不上报。
 
 ## 开发
 
 ```sh
-cd dsh-deepseek-desk
+cd dsh-deepseek-webdesk
 npm test        # node --test，Host 映射 + 客户端槽位注册
 ```
 
@@ -87,6 +87,6 @@ npm test        # node --test，Host 映射 + 客户端槽位注册
 <details>
 <summary>English</summary>
 
-**dsh-deepseek-desk** is a DeepSeek Harness (DSH) desktop plugin that lists your `chat.deepseek.com` conversations in the DSH sidebar and opens the full web chat in the main area. It reuses DSH's embedded-browser lease and the web session captured by `dsh-deepseek-web-login`, forces the Chinese locale, and hands conversations off to the current Harness task or a brand-new one.
+**dsh-deepseek-webdesk** is a DeepSeek Harness (DSH) desktop plugin that lists your `chat.deepseek.com` conversations in the DSH sidebar and opens the full web chat in the main area. It reuses DSH's embedded-browser lease and the web session captured by `dsh-deepseek-web-login`, forces the Chinese locale, and hands conversations off to the current Harness task or a brand-new one.
 
 </details>

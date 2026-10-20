@@ -11,14 +11,14 @@ import { join } from 'node:path';
  * machine and is never logged.
  */
 
-const API_PREFIX = '/dsh-deepseek-desk/api';
+const API_PREFIX = '/dsh-deepseek-webdesk/api';
 const DEEPSEEK_ORIGIN = 'https://chat.deepseek.com';
 const SESSION_LIST_PATH = '/api/v0/chat_session/fetch_page';
 const CACHE_TTL_MS = 5_000;
 const REQUEST_TIMEOUT_MS = 12_000;
 const MAX_SESSIONS = 60;
 
-export const name = 'dsh-deepseek-desk';
+export const name = 'dsh-deepseek-webdesk';
 export const inject = ['webServer'];
 
 function dshHome() {
@@ -282,6 +282,6 @@ export function apply(ctx) {
           }
         },
       }),
-    'dsh-deepseek-desk: api',
+    'dsh-deepseek-webdesk: api',
   );
 }

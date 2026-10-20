@@ -1,5 +1,5 @@
 window.__ModuleLoader__.load({
-  id: 'dsh-deepseek-desk',
+  id: 'dsh-deepseek-webdesk',
   factory(require) {
     const React = require('react');
     const h = React.createElement;
@@ -10,10 +10,10 @@ window.__ModuleLoader__.load({
     const TARGET = 'https://chat.deepseek.com/';
     const PANEL_ID = 'deepseek-web-session';
     const WORKSPACE_KEY = 'dsh-deepseek-web-session';
-    const SESSION_LIST_API = '/dsh-deepseek-desk/api/sessions';
+    const SESSION_LIST_API = '/dsh-deepseek-webdesk/api/sessions';
     const SESSION_LIST_REFRESH_MS = 20000;
     const CONVERSATION_URL = 'https://chat.deepseek.com/a/chat/s/';
-    const UI_PREFS_KEY = 'dsh-deepseek-desk.ui.v1';
+    const UI_PREFS_KEY = 'dsh-deepseek-webdesk.ui.v1';
     const SESSION_LIMIT_DEFAULT = 20;
     const SESSION_LIMIT_MAX = 60;
     const SHARED_LOGIN_API = '/deepseek-web-login/api/browser/session';
@@ -211,7 +211,7 @@ window.__ModuleLoader__.load({
 
     async function pinWebSession(id, pinned) {
       try {
-        const response = await fetch('/dsh-deepseek-desk/api/sessions/pin', {
+        const response = await fetch('/dsh-deepseek-webdesk/api/sessions/pin', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ id, pinned: pinned === true }),
@@ -231,7 +231,7 @@ window.__ModuleLoader__.load({
 
     async function deleteWebSession(id) {
       try {
-        const response = await fetch('/dsh-deepseek-desk/api/sessions/delete', {
+        const response = await fetch('/dsh-deepseek-webdesk/api/sessions/delete', {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify({ id }),
@@ -1960,14 +1960,14 @@ window.__ModuleLoader__.load({
       ctx.effect(
         () => {
           const tag = document.createElement('style');
-          tag.dataset.plugin = 'dsh-deepseek-desk';
+          tag.dataset.plugin = 'dsh-deepseek-webdesk';
           tag.textContent = CSS;
           document.head.appendChild(tag);
           return () => {
             tag.remove();
           };
         },
-        'dsh-deepseek-desk: styles',
+        'dsh-deepseek-webdesk: styles',
       );
       // 侧边栏底部的「会话」区：位于工作区列表下方、设置之上（sidebar.footer.action）。
       ctx.effect(() => {
@@ -1982,10 +1982,10 @@ window.__ModuleLoader__.load({
             ),
           );
         } catch (error) {
-          console.warn('[dsh-deepseek-desk] sidebar.footer.action 槽位不可用：', error);
+          console.warn('[dsh-deepseek-webdesk] sidebar.footer.action 槽位不可用：', error);
           return undefined;
         }
-      }, 'dsh-deepseek-desk: sidebar session entry');
+      }, 'dsh-deepseek-webdesk: sidebar session entry');
       // 主区域的 DeepSeek 网页页（选中时工作区会话取消选中，顶部用本页自己的头部）。
       ctx.effect(() => {
         try {
@@ -1999,10 +1999,10 @@ window.__ModuleLoader__.load({
             ),
           );
         } catch (error) {
-          console.warn('[dsh-deepseek-desk] main 槽位不可用：', error);
+          console.warn('[dsh-deepseek-webdesk] main 槽位不可用：', error);
           return undefined;
         }
-      }, 'dsh-deepseek-desk: main page');
+      }, 'dsh-deepseek-webdesk: main page');
       ctx.effect(() => {
         try {
           return ctx.slots.inject('shell.overlay', () =>
@@ -2015,10 +2015,10 @@ window.__ModuleLoader__.load({
             ),
           );
         } catch (error) {
-          console.warn('[dsh-deepseek-desk] shell.overlay 槽位不可用：', error);
+          console.warn('[dsh-deepseek-webdesk] shell.overlay 槽位不可用：', error);
           return undefined;
         }
-      }, 'dsh-deepseek-desk: overlay host');
+      }, 'dsh-deepseek-webdesk: overlay host');
       ctx.effect(() => {
         void refreshSessionList();
         const timer = window.setInterval(() => {
@@ -2031,13 +2031,13 @@ window.__ModuleLoader__.load({
           window.clearInterval(timer);
           window.clearInterval(titleTimer);
         };
-      }, 'dsh-deepseek-desk: session list poll');
+      }, 'dsh-deepseek-webdesk: session list poll');
       ctx.effect(
         () => () => {
           releaseGuest();
           appCtx = null;
         },
-        'dsh-deepseek-desk: cleanup',
+        'dsh-deepseek-webdesk: cleanup',
       );
     }
 

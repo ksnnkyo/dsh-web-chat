@@ -1,6 +1,6 @@
 {
-  "name": "dsh-deepseek-desk",
-  "version": "0.8.0",
+  "name": "dsh-deepseek-webdesk",
+  "version": "0.8.1",
   "private": false,
   "type": "module",
   "description": "DeepSeek Web Desk for DSH: 在左侧栏拉出 DeepSeek 网页版会话列表，点一条就在主区域打开完整网页对话（复用 DSH 网页登录态、中文界面），并可接力到当前任务或新建任务。",
@@ -47,12 +47,12 @@
   },
   "author": "zneoxlab",
   "license": "MIT",
-  "homepage": "https://github.com/zneoxlab/dsh-deepseek-desk",
+  "homepage": "https://github.com/zneoxlab/dsh-deepseek-webdesk",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zneoxlab/dsh-deepseek-desk.git"
+    "url": "git+https://github.com/zneoxlab/dsh-deepseek-webdesk.git"
   },
   "bugs": {
-    "url": "https://github.com/zneoxlab/dsh-deepseek-desk/issues"
+    "url": "https://github.com/zneoxlab/dsh-deepseek-webdesk/issues"
   }
 }
