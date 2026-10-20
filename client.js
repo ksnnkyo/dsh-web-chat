@@ -121,7 +121,6 @@ window.__ModuleLoader__.load({
         collapsed: raw.collapsed === true,
         limit: Number.isFinite(limit) ? Math.max(SESSION_LIMIT_DEFAULT, Math.min(SESSION_LIMIT_MAX, Math.floor(limit))) : SESSION_LIMIT_DEFAULT,
         pins: Array.isArray(raw.pins) ? raw.pins.filter((id) => typeof id === 'string' && id !== '').slice(0, 200) : [],
-        shortcutEnabled: raw.shortcutEnabled !== false,
       };
     }
 
@@ -1325,102 +1324,159 @@ window.__ModuleLoader__.load({
       }, 1500);
     }
 
-    let disposeShortcutCommand = null;
-
-    function toggleWebdeskFromShortcut() {
-      if (pageOpen) closePage();
-      else openPage();
+    function formatHotkey(config) {
+      if (config === null || config === undefined || typeof config !== 'object') return '';
+      const mac = /mac/i.test(String(navigator.platform || '')) || /Mac/.test(String(navigator.userAgent || ''));
+      const labels = { control: mac ? '⌃' : 'Ctrl', alt: mac ? '⌥' : 'Alt', shift: mac ? '⇧' : 'Shift', meta: mac ? '⌘' : 'Win' };
+      const keys = Array.isArray(config.modifiers) ? config.modifiers.map((modifier) => labels[modifier] ?? '') : [];
+      const key = config.key === 'Space' ? 'Space' : String(config.key ?? '');
+      return mac ? keys.join('') + ' ' + key : [...keys, key].join('+');
     }
 
-    function syncShortcutCommand() {
-      if (appCtx === null) return;
-      const shortcuts = appCtx.shortcuts;
-      if (shortcuts === undefined || shortcuts === null || typeof shortcuts.register !== 'function') return;
-      const enabled = uiPrefs.shortcutEnabled !== false;
-      if (enabled && disposeShortcutCommand === null) {
-        try {
-          disposeShortcutCommand = shortcuts.register({
-            id: 'deepseek-webdesk.toggle',
-            label: () => '打开/关闭 DeepSeek 网页工作台',
-            aliases: ['deepseek', 'deepseek webdesk', 'webdesk'],
-            defaults: {
-              'desktop:macos': { code: 'KeyD', modifiers: ['primary', 'shift'] },
-              'desktop:windows': { code: 'KeyD', modifiers: ['primary', 'shift'] },
-              'desktop:linux': { code: 'KeyD', modifiers: ['primary', 'shift'] },
-              'web:macos': { code: 'KeyD', modifiers: ['primary', 'shift'] },
-              'web:windows': { code: 'KeyD', modifiers: ['primary', 'shift'] },
-              'web:linux': { code: 'KeyD', modifiers: ['primary', 'shift'] },
-            },
-            regions: ['page', 'editable', 'terminal'],
-            modals: [],
-            resolve: () => ({ status: 'handled', run: toggleWebdeskFromShortcut }),
-          });
-        } catch (error) {
-          disposeShortcutCommand = null;
-          console.warn('[dsh-deepseek-desk] could not register shortcut:', error);
-        }
-      } else if (!enabled && disposeShortcutCommand !== null) {
-        try {
-          disposeShortcutCommand();
-        } catch (error) {
-          /* disposal is best effort */
-        }
-        disposeShortcutCommand = null;
-      }
+    function keyFromEvent(event) {
+      const code = typeof event.code === 'string' ? event.code : '';
+      if (code === 'Space' || event.key === ' ' || event.key === 'Spacebar') return 'Space';
+      let match = /^Key([A-Z])$/.exec(code);
+      if (match !== null) return match[1];
+      match = /^Digit([0-9])$/.exec(code);
+      if (match !== null) return match[1];
+      match = /^F([1-9]|1[0-2])$/.exec(code);
+      if (match !== null) return code;
+      return '';
     }
 
-    function shortcutBindingLabel() {
-      if (appCtx === null) return '';
+    function modifiersFromEvent(event) {
+      const modifiers = [];
+      if (event.ctrlKey === true) modifiers.push('control');
+      if (event.altKey === true) modifiers.push('alt');
+      if (event.shiftKey === true) modifiers.push('shift');
+      if (event.metaKey === true) modifiers.push('meta');
+      return modifiers;
+    }
+
+    async function fetchHotkeyState() {
       try {
-        const catalog = appCtx.shortcuts !== undefined ? appCtx.shortcuts.catalog : undefined;
-        if (catalog === undefined || catalog === null || typeof catalog.getSnapshot !== 'function') return '';
-        const rows = catalog.getSnapshot();
-        const row = Array.isArray(rows) ? rows.find((entry) => entry !== null && entry !== undefined && entry.id === 'deepseek-webdesk.toggle') : undefined;
-        if (row === undefined) return '';
-        if (typeof row.aria === 'string' && row.aria !== '') return row.aria;
-        if (Array.isArray(row.keys)) return row.keys.filter((key) => key !== '+').join('+');
-        return '';
+        const response = await fetch('/dsh-deepseek-webdesk/api/hotkey', { credentials: 'same-origin', cache: 'no-store' });
+        if (!response.ok) return null;
+        const payload = await response.json().catch(() => null);
+        return payload !== null && payload !== undefined && payload.ok === true ? payload : null;
       } catch (error) {
-        return '';
+        return null;
       }
     }
 
-    function ShortcutSettingsRow() {
-      const prefs = useUiPrefs();
-      const [, forceRender] = React.useState(0);
+    async function saveHotkeyState(config) {
+      try {
+        const response = await fetch('/dsh-deepseek-webdesk/api/hotkey', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(config),
+        });
+        const payload = await response.json().catch(() => null);
+        if (!response.ok || payload === null || payload.ok !== true) return { ok: false, error: payload?.error ?? 'save-failed' };
+        return { ok: true, state: payload };
+      } catch (error) {
+        return { ok: false, error: 'network' };
+      }
+    }
+
+    function HotkeySettingsRow() {
+      const [state, setState] = React.useState(null);
+      const [recording, setRecording] = React.useState(false);
+      const [saving, setSaving] = React.useState(false);
+      const [error, setError] = React.useState('');
+      const config = state !== null && state.config !== null && typeof state.config === 'object' ? state.config : { enabled: true, key: 'Space', modifiers: ['alt'] };
+      const enabled = config.enabled !== false;
+      const label = formatHotkey(config);
+      const helperError = state !== null && typeof state.error === 'string' ? state.error : '';
+      const running = state !== null && state.running === true;
       React.useEffect(() => {
-        if (appCtx === null) return undefined;
-        const catalog = appCtx.shortcuts !== undefined ? appCtx.shortcuts.catalog : undefined;
-        if (catalog === undefined || catalog === null || typeof catalog.subscribe !== 'function') return undefined;
-        return catalog.subscribe(() => forceRender((value) => value + 1));
+        let disposed = false;
+        const load = async () => {
+          const payload = await fetchHotkeyState();
+          if (!disposed && payload !== null) {
+            setState(payload);
+            setError(payload.error === '' ? '' : String(payload.error));
+          }
+        };
+        void load();
+        const timer = window.setInterval(() => { void load(); }, 5000);
+        return () => {
+          disposed = true;
+          window.clearInterval(timer);
+        };
       }, []);
-      const enabled = prefs.shortcutEnabled !== false;
-      const binding = enabled ? shortcutBindingLabel() : '';
+      React.useEffect(() => {
+        if (!recording) return undefined;
+        const onKeyDown = (event) => {
+          event.preventDefault();
+          event.stopPropagation();
+          if (event.key === 'Escape') {
+            setRecording(false);
+            return;
+          }
+          const key = keyFromEvent(event);
+          const modifiers = modifiersFromEvent(event);
+          if (key === '' || modifiers.length === 0) return;
+          setRecording(false);
+          void persist({ enabled: true, key, modifiers });
+        };
+        window.addEventListener('keydown', onKeyDown, true);
+        return () => window.removeEventListener('keydown', onKeyDown, true);
+      }, [recording]);
+      const persist = async (next) => {
+        setSaving(true);
+        const result = await saveHotkeyState(next);
+        setSaving(false);
+        if (result.ok) {
+          setState(result.state);
+          setError(result.state.error === '' ? '' : String(result.state.error));
+        } else {
+          setError(String(result.error));
+        }
+      };
+      const status = !enabled
+        ? '已停用'
+        : running
+          ? '全局快捷键已生效'
+          : helperError !== ''
+            ? '助手未运行：' + helperError
+            : '助手启动中…';
       return h(
         'div',
         { className: 'dws-set-row' },
         h(
           'div',
           { className: 'dws-set-copy' },
-          h('div', { className: 'dws-set-title' }, 'DeepSeek 页快捷键'),
+          h('div', { className: 'dws-set-title' }, '全局唤出 DSH'),
           h(
             'div',
             { className: 'dws-set-desc' },
-            '独立开关：启用后可用快捷键快速打开/关闭 DeepSeek 网页工作台；按键可在「设置 → 快捷键」里搜索 "DeepSeek" 修改。',
+            '任意页面按 ',
+            h('kbd', { className: 'dws-kbd' }, label !== '' ? label : '⌥ Space'),
+            ' 显示/隐藏整个 DeepSeek Harness；再按一次隐藏。macOS 默认 ⌥ Space，Windows 默认 Alt+Space，点「修改」可录制新组合。',
           ),
-          enabled && binding !== '' ? h('div', { className: 'dws-set-binding' }, '当前按键：', h('kbd', { className: 'dws-kbd' }, binding)) : null,
+          h('div', { className: 'dws-set-binding' }, '状态：', status),
         ),
         h(
-          'button',
-          {
-            type: 'button',
-            role: 'switch',
-            'aria-checked': enabled ? 'true' : 'false',
-            'aria-label': '启用 DeepSeek 页快捷键',
-            className: 'dws-switch' + (enabled ? ' on' : ''),
-            onClick: () => updateUiPrefs({ shortcutEnabled: !enabled }),
-          },
-          h('span', { className: 'dws-switch-knob' }),
+          'div',
+          { className: 'dws-hotkey-actions' },
+          recording
+            ? h('span', { className: 'dws-hotkey-recording' }, '请按下组合键…（Esc 取消）')
+            : h('button', { type: 'button', className: 'dws-btn', onClick: () => setRecording(true) }, '修改'),
+          h(
+            'button',
+            {
+              type: 'button',
+              role: 'switch',
+              'aria-checked': enabled ? 'true' : 'false',
+              'aria-label': '启用全局唤出 DSH',
+              className: 'dws-switch' + (enabled ? ' on' : ''),
+              disabled: saving,
+              onClick: () => { void persist({ enabled: !enabled, key: config.key, modifiers: config.modifiers }); },
+            },
+            h('span', { className: 'dws-switch-knob' }),
+          ),
         ),
       );
     }
@@ -2107,6 +2163,8 @@ window.__ModuleLoader__.load({
       '.dws-foot-title-text{margin-left:6px}',
       '.dws-foot-chevron{display:inline-flex;align-items:center;justify-content:center;width:14px;height:14px;margin-left:2px;opacity:0;transition:opacity .12s ease}',
       '.dws-foot-head:hover .dws-foot-chevron,.dws-foot-chevron.shown{opacity:.7}',
+      '.dws-hotkey-actions{display:flex;align-items:center;gap:10px;flex:none}',
+      '.dws-hotkey-recording{color:var(--dsw-alias-state-business-primary,#4d6bfe);font-size:12px;line-height:18px}',
       '.dws-set-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:16px 0;border-bottom:1px solid var(--dsw-alias-border-l1,#eceef1)}',
       '.dws-set-copy{min-width:0;display:flex;flex-direction:column;gap:4px}',
       '.dws-set-title{color:var(--dsw-alias-label-primary,#1f2329);font-size:14px;line-height:22px;font-weight:500}',
@@ -2157,39 +2215,23 @@ window.__ModuleLoader__.load({
         },
         'dsh-deepseek-webdesk: styles',
       );
-      // 快捷键（附加小组件）：默认 Mod+Shift+D，可在 DSH 设置 → 快捷键里改键；可在通用设置里独立停用。
-      ctx.effect(() => {
-        syncShortcutCommand();
-        const off = subscribeUiPrefs(() => syncShortcutCommand());
-        return () => {
-          off();
-          if (disposeShortcutCommand !== null) {
-            try {
-              disposeShortcutCommand();
-            } catch (error) {
-              /* disposal is best effort */
-            }
-            disposeShortcutCommand = null;
-          }
-        };
-      }, 'dsh-deepseek-desk: shortcut command');
       ctx.effect(() => {
         try {
           return ctx.slots.inject('settings.general.item', () =>
             ctx.slots.register(
               {
                 name: 'settings.general.item',
-                id: 'dsh-deepseek-desk-shortcut',
+                id: 'dsh-deepseek-webdesk-hotkey',
                 order: 30,
               },
-              ShortcutSettingsRow,
+              HotkeySettingsRow,
             ),
           );
         } catch (error) {
-          console.warn('[dsh-deepseek-desk] settings.general.item 槽位不可用：', error);
+          console.warn('[dsh-deepseek-webdesk] settings.general.item 槽位不可用：', error);
           return undefined;
         }
-      }, 'dsh-deepseek-desk: settings row');
+      }, 'dsh-deepseek-webdesk: settings row');
       // 侧边栏底部的「会话」区：位于工作区列表下方、设置之上（sidebar.footer.action）。
       ctx.effect(() => {
         try {
@@ -2272,7 +2314,7 @@ window.__ModuleLoader__.load({
     }
 
     return {
-      inject: ['slots', 'layout', 'shortcuts'],
+      inject: ['slots', 'layout'],
       apply,
     };
   },

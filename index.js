@@ -1,3 +1,4 @@
+import { spawn, spawnSync } from 'node:child_process';
 import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
@@ -21,6 +22,19 @@ const DESK_DIR_NAME = 'deepseek-webdesk';
 const SESSION_FILE_NAME = 'session.json';
 const SESSION_VALUE_LIMIT = 200_000;
 const SESSION_ENTRY_LIMIT = 120;
+const HOTKEY_FILE_NAME = 'hotkey.json';
+const HELPER_DIR_NAME = 'helper';
+const HOTKEY_KEYS = /^([A-Z]|[0-9]|Space|F([1-9]|1[0-2]))$/;
+const HOTKEY_MODIFIERS = ['control', 'alt', 'shift', 'meta'];
+const MAC_KEYCODES = {
+  A: 0, S: 1, D: 2, F: 3, H: 4, G: 5, Z: 6, X: 7, C: 8, V: 9, B: 11, Q: 12, W: 13, E: 14, R: 15,
+  Y: 16, T: 17, '1': 18, '2': 19, '3': 20, '4': 21, '6': 22, '5': 23, '9': 25, '7': 26, '8': 28,
+  '0': 29, O: 31, U: 32, I: 34, P: 35, L: 37, J: 38, K: 40, N: 45, M: 46, Space: 49,
+  F1: 122, F2: 120, F3: 99, F4: 118, F5: 96, F6: 97, F7: 98, F8: 100, F9: 101, F10: 109, F11: 103, F12: 111,
+};
+const MAC_MODS = { control: 4096, alt: 2048, shift: 512, meta: 256 };
+const WIN_MODS = { alt: 1, control: 2, shift: 4, meta: 8 };
+const WIN_KEYS = { Space: 0x20, F1: 0x70, F2: 0x71, F3: 0x72, F4: 0x73, F5: 0x74, F6: 0x75, F7: 0x76, F8: 0x77, F9: 0x78, F10: 0x79, F11: 0x7a, F12: 0x7b };
 
 export const name = 'dsh-deepseek-webdesk';
 export const inject = ['webServer'];
@@ -343,6 +357,260 @@ function sendJson(res, status, body) {
   }
 }
 
+function helperDir() {
+  return join(deskDir(), HELPER_DIR_NAME);
+}
+
+function hotkeyFile() {
+  return join(deskDir(), HOTKEY_FILE_NAME);
+}
+
+function defaultHotkey() {
+  return { enabled: true, key: 'Space', modifiers: ['alt'] };
+}
+
+/** Validate a hotkey config from the client; exported for tests. */
+export function normalizeHotkeyConfig(raw) {
+  if (raw === null || typeof raw !== 'object') return null;
+  const key = typeof raw.key === 'string' && HOTKEY_KEYS.test(raw.key) ? raw.key : 'Space';
+  const modifiers = [];
+  if (Array.isArray(raw.modifiers)) {
+    for (const modifier of raw.modifiers) {
+      if (HOTKEY_MODIFIERS.includes(modifier) && !modifiers.includes(modifier)) modifiers.push(modifier);
+    }
+  }
+  if (modifiers.length === 0) modifiers.push('alt');
+  return { enabled: raw.enabled !== false, key, modifiers };
+}
+
+function readHotkey() {
+  try {
+    if (!existsSync(hotkeyFile())) return defaultHotkey();
+    return normalizeHotkeyConfig(JSON.parse(readFileSync(hotkeyFile(), 'utf8'))) ?? defaultHotkey();
+  } catch {
+    return defaultHotkey();
+  }
+}
+
+function writeHotkey(raw) {
+  const config = normalizeHotkeyConfig(raw);
+  if (config === null) return null;
+  mkdirSync(deskDir(), { recursive: true });
+  writeFileSync(hotkeyFile(), JSON.stringify(config, null, 2) + '\n', { mode: 0o600 });
+  return config;
+}
+
+let helperChild = null;
+let helperError = '';
+let helperCompiling = false;
+let helperPendingRestart = false;
+
+const MAC_HELPER_SOURCE = `import Cocoa
+import Carbon
+
+let bundleId = "com.deepseek.dsh"
+var hotKeyRef: EventHotKeyRef?
+var handlerRef: EventHandlerRef?
+
+func toggle() {
+  guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: bundleId).first else { return }
+  if app.isActive {
+    app.hide()
+  } else {
+    app.unhide()
+    app.activate(options: [.activateIgnoringOtherApps])
+  }
+}
+
+@_silgen_name("RunApplicationEventLoop")
+func CarbonRunApplicationEventLoop()
+
+let arguments = CommandLine.arguments
+let code = UInt32(arguments.count > 1 ? arguments[1] : "49") ?? 49
+let modifiers = UInt32(arguments.count > 2 ? arguments[2] : "2048") ?? 2048
+var hotKeyID = EventHotKeyID(signature: OSType(0x44534857), id: 1)
+RegisterEventHotKey(code, modifiers, hotKeyID, GetApplicationEventTarget(), 0, &hotKeyRef)
+var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+InstallEventHandler(GetApplicationEventTarget(), { (_, _, _) -> OSStatus in
+  toggle()
+  return noErr
+}, 1, &eventType, nil, &handlerRef)
+CarbonRunApplicationEventLoop()
+`;
+
+const WIN_HELPER_SOURCE = String.raw`param([int]$Modifiers = 1, [int]$VirtualKey = 0x20)
+Add-Type -ReferencedAssemblies System.Windows.Forms, System.Drawing @"
+using System;
+using System.Diagnostics;
+using System.Runtime.InteropServices;
+using System.Windows.Forms;
+
+public class DshHotKeyForm : Form {
+  [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
+  [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
+  [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
+  [DllImport("user32.dll")] static extern bool IsWindowVisible(IntPtr hWnd);
+  const int WM_HOTKEY = 0x0312;
+  int id = 0x4453;
+  uint modifiers;
+  uint vk;
+  public DshHotKeyForm(uint modifiers, uint vk) {
+    this.modifiers = modifiers;
+    this.vk = vk;
+    ShowInTaskbar = false;
+    WindowState = FormWindowState.Minimized;
+    Opacity = 0;
+    FormBorderStyle = FormBorderStyle.None;
+    Load += (s, e) => { RegisterHotKey(Handle, id, modifiers, vk); };
+  }
+  static IntPtr TargetWindow() {
+    foreach (Process process in Process.GetProcesses()) {
+      try {
+        if (process.MainWindowHandle == IntPtr.Zero) continue;
+        if (process.ProcessName.IndexOf("DeepSeek", StringComparison.OrdinalIgnoreCase) >= 0) return process.MainWindowHandle;
+      } catch { }
+    }
+    return IntPtr.Zero;
+  }
+  protected override void WndProc(ref Message m) {
+    if (m.Msg == WM_HOTKEY) {
+      IntPtr window = TargetWindow();
+      if (window != IntPtr.Zero) {
+        if (IsWindowVisible(window)) ShowWindow(window, 0);
+        else { ShowWindow(window, 9); SetForegroundWindow(window); }
+      }
+    }
+    base.WndProc(ref m);
+  }
+}
+"@
+$form = New-Object DshHotKeyForm -ArgumentList ([uint32]$Modifiers), ([uint32]$VirtualKey)
+[System.Windows.Forms.Application]::Run($form)
+`;
+
+function macAccelerator(config) {
+  const keyCode = MAC_KEYCODES[config.key] === undefined ? 49 : MAC_KEYCODES[config.key];
+  let modifiers = 0;
+  for (const modifier of config.modifiers) modifiers |= MAC_MODS[modifier] ?? 0;
+  return { keyCode, modifiers };
+}
+
+function winAccelerator(config) {
+  let vk = WIN_KEYS[config.key];
+  if (vk === undefined) {
+    if (/^[A-Z0-9]$/.test(config.key)) vk = config.key.charCodeAt(0);
+    else vk = 0x20;
+  }
+  let modifiers = 0;
+  for (const modifier of config.modifiers) modifiers |= WIN_MODS[modifier] ?? 0;
+  return { vk, modifiers };
+}
+
+function stopHotkeyHelper() {
+  const child = helperChild;
+  helperChild = null;
+  if (child !== null) {
+    try {
+      child.kill();
+    } catch {
+      /* already gone */
+    }
+  }
+}
+
+function startHotkeyHelper() {
+  const config = readHotkey();
+  if (config.enabled !== true) {
+    stopHotkeyHelper();
+    return;
+  }
+  stopHotkeyHelper();
+  helperError = '';
+  if (process.platform === 'darwin') {
+    const dir = helperDir();
+    const binary = join(dir, 'dsh-hotkey');
+    const source = join(dir, 'dsh-hotkey.swift');
+    mkdirSync(dir, { recursive: true });
+    const needBuild = !existsSync(binary) || !existsSync(source) || readFileSync(source, 'utf8') !== MAC_HELPER_SOURCE;
+    if (needBuild) {
+      if (helperCompiling) {
+        helperPendingRestart = true;
+        return;
+      }
+      helperCompiling = true;
+      try {
+        writeFileSync(source, MAC_HELPER_SOURCE, 'utf8');
+        const result = spawnSync('swiftc', ['-O', '-o', binary, source], { timeout: 120_000, encoding: 'utf8' });
+        if (result.status !== 0) {
+          helperError = 'swiftc: ' + String(result.stderr || result.error || 'build failed').slice(0, 400);
+        } else {
+          try {
+            spawnSync('chmod', ['755', binary]);
+          } catch {
+            /* optional */
+          }
+        }
+      } catch (error) {
+        helperError = 'swiftc: ' + String(error !== null && typeof error === 'object' && typeof error.message === 'string' ? error.message : error).slice(0, 400);
+      } finally {
+        helperCompiling = false;
+        if (helperPendingRestart) {
+          helperPendingRestart = false;
+          if (helperError === '') startHotkeyHelper();
+        }
+      }
+    }
+    if (helperError !== '' || !existsSync(binary)) return;
+    const { keyCode, modifiers } = macAccelerator(config);
+    try {
+      const child = spawn(binary, [String(keyCode), String(modifiers)], { stdio: 'ignore' });
+      helperChild = child;
+      child.on('exit', (code) => {
+        if (helperChild === child) helperChild = null;
+        if (code !== 0 && code !== null) helperError = 'helper exited with code ' + code;
+      });
+      child.on('error', (error) => {
+        helperError = String(error !== null && typeof error === 'object' && typeof error.message === 'string' ? error.message : error).slice(0, 400);
+      });
+    } catch (error) {
+      helperError = String(error !== null && typeof error === 'object' && typeof error.message === 'string' ? error.message : error).slice(0, 400);
+    }
+    return;
+  }
+  if (process.platform === 'win32') {
+    const dir = helperDir();
+    const script = join(dir, 'dsh-hotkey.ps1');
+    mkdirSync(dir, { recursive: true });
+    writeFileSync(script, WIN_HELPER_SOURCE, 'utf8');
+    const { vk, modifiers } = winAccelerator(config);
+    try {
+      const child = spawn('powershell.exe', ['-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', script, '-Modifiers', String(modifiers), '-VirtualKey', String(vk)], { stdio: 'ignore', windowsHide: true });
+      helperChild = child;
+      child.on('exit', (code) => {
+        if (helperChild === child) helperChild = null;
+        if (code !== 0 && code !== null) helperError = 'helper exited with code ' + code;
+      });
+      child.on('error', (error) => {
+        helperError = String(error !== null && typeof error === 'object' && typeof error.message === 'string' ? error.message : error).slice(0, 400);
+      });
+    } catch (error) {
+      helperError = String(error !== null && typeof error === 'object' && typeof error.message === 'string' ? error.message : error).slice(0, 400);
+    }
+    return;
+  }
+  helperError = 'global hotkey is currently implemented for macOS and Windows only';
+}
+
+function hotkeyStatus() {
+  return {
+    platform: process.platform,
+    config: readHotkey(),
+    running: helperChild !== null,
+    error: helperError,
+    pid: helperChild !== null ? helperChild.pid ?? null : null,
+  };
+}
+
 export function apply(ctx) {
   ctx.effect(
     () =>
@@ -412,6 +680,21 @@ export function apply(ctx) {
               sendJson(res, result.ok ? 200 : 502, result);
               return;
             }
+            if (req.method === 'GET' && (route === '/hotkey' || route === '/hotkey/')) {
+              sendJson(res, 200, { ok: true, ...hotkeyStatus() });
+              return;
+            }
+            if (req.method === 'POST' && (route === '/hotkey' || route === '/hotkey/')) {
+              const body = await readJsonBody(req);
+              const config = writeHotkey(body);
+              if (config === null) {
+                sendJson(res, 400, { ok: false, error: 'invalid-hotkey' });
+                return;
+              }
+              startHotkeyHelper();
+              sendJson(res, 200, { ok: true, ...hotkeyStatus() });
+              return;
+            }
             sendJson(res, 404, { ok: false, error: 'unknown route' });
           } catch (error) {
             sendJson(res, 500, {
@@ -426,4 +709,8 @@ export function apply(ctx) {
       }),
     'dsh-deepseek-webdesk: api',
   );
+  ctx.effect(() => {
+    startHotkeyHelper();
+    return () => stopHotkeyHelper();
+  }, 'dsh-deepseek-webdesk: global hotkey helper');
 }

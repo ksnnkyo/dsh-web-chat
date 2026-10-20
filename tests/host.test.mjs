@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeSessions, normalizeSessionSnapshot, sessionToken } from '../index.js';
+import { normalizeHotkeyConfig, normalizeSessions, normalizeSessionSnapshot, sessionToken } from '../index.js';
 
 const payload = {
   code: 0,
@@ -51,4 +51,13 @@ test('guest session snapshots are clamped and their userToken is readable', () =
   assert.equal(sessionToken(snapshot), 'tok');
   assert.equal(sessionToken({ storage: { userToken: 'bare-token' } }), 'bare-token');
   assert.equal(normalizeSessionSnapshot({ storage: {}, cookies: [] }), null);
+});
+
+
+test('hotkey config defaults and validation', () => {
+  assert.deepEqual(normalizeHotkeyConfig({ key: 'Space', modifiers: ['alt'] }), { enabled: true, key: 'Space', modifiers: ['alt'] });
+  assert.deepEqual(normalizeHotkeyConfig({ key: 'D', modifiers: ['meta', 'shift'], enabled: false }), { enabled: false, key: 'D', modifiers: ['meta', 'shift'] });
+  assert.deepEqual(normalizeHotkeyConfig({ key: 'Nope', modifiers: [] }), { enabled: true, key: 'Space', modifiers: ['alt'] });
+  assert.deepEqual(normalizeHotkeyConfig({ key: 'K', modifiers: ['alt', 'alt', 'bogus'] }), { enabled: true, key: 'K', modifiers: ['alt'] });
+  assert.equal(normalizeHotkeyConfig(null), null);
 });
