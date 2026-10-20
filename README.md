@@ -63,6 +63,8 @@ DSH 桌面版默认不内置插件市场，需要先启用实验性的「自定�
 
 ### 从 npm 安装
 
+npm 包：[`dsh-deepseek-webdesk`](https://www.npmjs.com/package/dsh-deepseek-webdesk)（MIT）
+
 ```sh
 dsh plugin --profile desktop add dsh-deepseek-webdesk@0.12.2
 ```

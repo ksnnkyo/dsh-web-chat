@@ -28,11 +28,9 @@
       "versions": [
         {
           "version": "0.12.2",
-          "publishTimestamp": 1792512576,
+          "publishTimestamp": 1792514753,
           "source": {
-            "type": "git",
-            "url": "https://github.com/zneoxlab/dsh-deepseek-webdesk",
-            "commit": "032e4045319fb66d932d2496bb80f51933bb1b2e"
+            "type": "npm"
           },
           "engines": {
             "dsh": ">=0.2.1-rc.2"
