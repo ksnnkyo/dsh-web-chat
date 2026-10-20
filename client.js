@@ -2051,6 +2051,20 @@ window.__ModuleLoader__.load({
                 h('span', { className: 'dws-foot-label' }, '未登录，点击登录'),
               ),
             );
+          } else if (list.error === 'token-expired') {
+            children.push(
+              h(
+                'button',
+                {
+                  key: 'relogin',
+                  type: 'button',
+                  className: 'dws-foot-item dws-foot-state-btn',
+                  title: '打开 DeepSeek 网页重新登录',
+                  onClick: () => openNewConversation(),
+                },
+                h('span', { className: 'dws-foot-label' }, '登录已过期，点击重新登录'),
+              ),
+            );
           } else if (list.error !== '') {
             children.push(
               h(

@@ -54,6 +54,14 @@ test('guest session snapshots are clamped and their userToken is readable', () =
 });
 
 
+test('signed-out captures never yield a token', () => {
+  assert.equal(sessionToken({ storage: { userToken: '{"value":null,"__version":"0"}' } }), '');
+  assert.equal(sessionToken({ writes: [{ key: 'userToken', value: '{"value":null,"__version":"0"}' }] }), '');
+  assert.equal(sessionToken({ storage: {} }), '');
+  assert.equal(sessionToken(null), '');
+});
+
+
 test('hotkey config defaults and validation', () => {
   assert.deepEqual(normalizeHotkeyConfig({ key: 'Space', modifiers: ['alt'] }), { enabled: true, key: 'Space', modifiers: ['alt'] });
   assert.deepEqual(normalizeHotkeyConfig({ key: 'D', modifiers: ['meta', 'shift'], enabled: false }), { enabled: false, key: 'D', modifiers: ['meta', 'shift'] });

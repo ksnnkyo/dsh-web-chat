@@ -176,46 +176,84 @@ function clearOwnSession() {
   cache = { at: 0, value: null };
 }
 
-/** Read the `userToken` value out of a captured guest snapshot. */
-export function sessionToken(snapshot) {
-  if (snapshot === null || typeof snapshot !== 'object') return '';
-  const readValue = (raw) => {
-    if (typeof raw !== 'string' || raw === '') return '';
+/**
+ * Read one captured `localStorage` value. The app wraps some entries as
+ * `{"value": "…", "__version": "0"}` — a signed-out entry is `{"value": null}` and
+ * must not be mistaken for a token.
+ */
+function unwrapStorageValue(raw) {
+  if (typeof raw !== 'string' || raw === '') return '';
+  const text = raw.trim();
+  if (text.startsWith('{')) {
     try {
-      const parsed = JSON.parse(raw);
-      if (parsed !== null && typeof parsed === 'object' && typeof parsed.value === 'string') return parsed.value;
+      const parsed = JSON.parse(text);
+      if (parsed !== null && typeof parsed === 'object' && 'value' in parsed) {
+        return typeof parsed.value === 'string' ? parsed.value.trim() : '';
+      }
     } catch {
       /* a bare token is valid too */
     }
-    return raw;
-  };
+  }
+  return text;
+}
+
+/** Read the `userToken` value out of a captured guest snapshot. */
+export function sessionToken(snapshot) {
+  if (snapshot === null || typeof snapshot !== 'object') return '';
   for (const entry of Array.isArray(snapshot.writes) ? snapshot.writes : []) {
     if (entry !== null && typeof entry === 'object' && entry.key === 'userToken') {
-      const token = readValue(entry.value);
+      const token = unwrapStorageValue(entry.value);
       if (token !== '') return token;
     }
   }
-  if (snapshot.storage !== null && typeof snapshot.storage === 'object' && typeof snapshot.storage.userToken === 'string') {
-    return readValue(snapshot.storage.userToken);
-  }
-  return '';
+  const storage = snapshot.storage !== null && typeof snapshot.storage === 'object' ? snapshot.storage : null;
+  return storage === null ? '' : unwrapStorageValue(storage.userToken);
 }
 
-/** Credentials for DeepSeek web API calls: own captured session first, web-login account second. */
-function webCredentials() {
+const WEB_CLIENT_HEADERS = {
+  accept: '*/*',
+  'x-client-locale': 'zh_CN',
+  'x-client-platform': 'web',
+  'x-client-version': '2.5.0',
+  'x-client-bundle-id': 'com.deepseek.chat',
+};
+
+/**
+ * Account-shaped credentials built from the snapshot the embedded page saved.
+ * That snapshot is fresher than `~/.dsh/web-login/accounts/*.json`: the site rotates
+ * `userToken`, so the web-login file can hold a token the server already rejects.
+ */
+function ownCredentials() {
   const own = readOwnSession();
+  if (own === null) return null;
   const token = sessionToken(own);
-  if (token !== '') {
-    return {
-      token,
-      userAgent: own.userAgent || '',
-      cookie: Array.isArray(own.cookies) ? own.cookies.join('; ') : '',
-      extraHeaders: {},
-      source: 'local',
-    };
-  }
+  if (token === '') return null;
+  const storage = own.storage !== null && typeof own.storage === 'object' ? own.storage : {};
+  return {
+    id: 'local',
+    token,
+    userAgent: typeof own.userAgent === 'string' ? own.userAgent : '',
+    cookie: Array.isArray(own.cookies) ? own.cookies.join('; ') : '',
+    hifLeim: unwrapStorageValue(storage.hif_leim_cached),
+    hifDliq: unwrapStorageValue(storage.hif_dliq_cached),
+    extraHeaders: {
+      ...WEB_CLIENT_HEADERS,
+      'x-client-timezone-offset': String(-new Date().getTimezoneOffset() * 60),
+    },
+    source: 'local',
+  };
+}
+
+/** Credential candidates, freshest first: the page capture, then the web-login account. */
+function credentialCandidates() {
+  const list = [];
+  const local = ownCredentials();
+  if (local !== null) list.push(local);
   const account = activeAccount();
-  return account === null ? null : { ...account, source: 'web-login' };
+  if (account !== null && !list.some((row) => row.token === account.token)) {
+    list.push({ ...account, source: 'web-login' });
+  }
+  return list;
 }
 
 /** Normalize one `fetch_page` payload; exported for tests. */
@@ -247,6 +285,14 @@ export function normalizeSessions(payload) {
 let cache = { at: 0, value: null };
 let inflight = null;
 
+/** A stored token the site no longer accepts (as opposed to a network or WAF failure). */
+function isTokenRejection(payload) {
+  if (payload === null || typeof payload !== 'object') return false;
+  if (payload.code === 40003) return true;
+  const msg = typeof payload.msg === 'string' ? payload.msg : '';
+  return msg.includes('INVALID_TOKEN');
+}
+
 /**
  * Read the signed-in web account's conversation list. Returns a plain object even on
  * failure so the client can render a useful empty state.
@@ -255,50 +301,58 @@ export async function listWebSessions(count) {
   const now = Date.now();
   if (cache.value !== null && now - cache.at < CACHE_TTL_MS) return cache.value;
   if (inflight !== null) return inflight;
-  const account = activeAccount();
-  if (account === null) {
+  const candidates = credentialCandidates();
+  if (candidates.length === 0) {
     return { ok: false, error: 'not-signed-in', sessions: [], hasMore: false };
   }
   const limitSource = Number(count);
   const limit = Number.isFinite(limitSource) ? Math.max(1, Math.min(MAX_SESSIONS, Math.floor(limitSource))) : 30;
   inflight = (async () => {
     try {
-      const response = await fetch(DEEPSEEK_ORIGIN + SESSION_LIST_PATH + '?count=' + limit, {
-        headers: requestHeaders(account),
-        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-      });
-      const payload = await response.json().catch(() => null);
-      if (!response.ok || payload === null || payload.code !== 0) {
-        return {
-          ok: false,
-          error:
-            payload !== null && typeof payload.msg === 'string' && payload.msg !== ''
-              ? payload.msg
-              : 'http-' + response.status,
-          sessions: [],
-          hasMore: false,
-        };
+      let lastError = 'request-failed';
+      for (const account of candidates) {
+        try {
+          const response = await fetch(DEEPSEEK_ORIGIN + SESSION_LIST_PATH + '?count=' + limit, {
+            headers: requestHeaders(account),
+            signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+          });
+          const payload = await response.json().catch(() => null);
+          const appCode = payload !== null && typeof payload === 'object' && typeof payload.code === 'number' ? payload.code : null;
+          if (!response.ok || payload === null || appCode !== 0) {
+            lastError = isTokenRejection(payload)
+              ? 'token-expired'
+              : payload !== null && typeof payload === 'object' && typeof payload.msg === 'string' && payload.msg !== ''
+                ? payload.msg
+                : 'http-' + response.status;
+            // A token the site no longer accepts is worth retrying with the next
+            // credential; a network or WAF failure will not improve on a retry.
+            if (appCode !== null && appCode !== 0) continue;
+            return { ok: false, error: lastError, sessions: [], hasMore: false };
+          }
+          const normalized = normalizeSessions(payload);
+          const value = {
+            ok: true,
+            sessions: normalized.sessions,
+            hasMore: normalized.hasMore,
+            account: account.id,
+            source: account.source,
+            at: new Date().toISOString(),
+          };
+          cache = { at: Date.now(), value };
+          return value;
+        } catch (error) {
+          return {
+            ok: false,
+            error:
+              error !== null && typeof error === 'object' && typeof error.message === 'string'
+                ? error.message.slice(0, 200)
+                : 'request-failed',
+            sessions: [],
+            hasMore: false,
+          };
+        }
       }
-      const normalized = normalizeSessions(payload);
-      const value = {
-        ok: true,
-        sessions: normalized.sessions,
-        hasMore: normalized.hasMore,
-        account: account.id,
-        at: new Date().toISOString(),
-      };
-      cache = { at: Date.now(), value };
-      return value;
-    } catch (error) {
-      return {
-        ok: false,
-        error:
-          error !== null && typeof error === 'object' && typeof error.message === 'string'
-            ? error.message.slice(0, 200)
-            : 'request-failed',
-        sessions: [],
-        hasMore: false,
-      };
+      return { ok: false, error: lastError, sessions: [], hasMore: false };
     } finally {
       inflight = null;
     }
@@ -348,6 +402,30 @@ async function callSessionApi(account, path, body) {
   const bizCode = payload.data !== null && typeof payload.data === 'object' ? payload.data.biz_code : undefined;
   if (bizCode !== undefined && bizCode !== 0) return { ok: false, error: 'biz-' + bizCode };
   return { ok: true };
+}
+
+/** POST one chat-session mutation, falling back to the next credential on a token rejection. */
+async function callSessionApiWithCandidates(path, body) {
+  const candidates = credentialCandidates();
+  if (candidates.length === 0) return { ok: false, error: 'not-signed-in' };
+  let last = { ok: false, error: 'request-failed' };
+  for (const account of candidates) {
+    try {
+      const result = await callSessionApi(account, path, body);
+      if (result.ok) return result;
+      last = result;
+      if (!/^(biz-|http-40[13]$)/.test(result.error)) return last;
+    } catch (error) {
+      return {
+        ok: false,
+        error:
+          error !== null && typeof error === 'object' && typeof error.message === 'string'
+            ? error.message.slice(0, 200)
+            : 'request-failed',
+      };
+    }
+  }
+  return last;
 }
 
 function sendJson(res, status, body) {
@@ -921,8 +999,7 @@ export function apply(ctx) {
               return;
             }
             if (req.method === 'POST' && (route === '/sessions/delete' || route === '/sessions/delete/')) {
-              const account = activeAccount();
-              if (account === null) {
+              if (credentialCandidates().length === 0) {
                 sendJson(res, 200, { ok: false, error: 'not-signed-in' });
                 return;
               }
@@ -932,14 +1009,13 @@ export function apply(ctx) {
                 sendJson(res, 400, { ok: false, error: 'invalid-id' });
                 return;
               }
-              const result = await callSessionApi(account, '/api/v0/chat_session/delete', { chat_session_ids: [id] });
+              const result = await callSessionApiWithCandidates('/api/v0/chat_session/delete', { chat_session_ids: [id] });
               cache = { at: 0, value: null };
               sendJson(res, result.ok ? 200 : 502, result);
               return;
             }
             if (req.method === 'POST' && (route === '/sessions/pin' || route === '/sessions/pin/')) {
-              const account = activeAccount();
-              if (account === null) {
+              if (credentialCandidates().length === 0) {
                 sendJson(res, 200, { ok: false, error: 'not-signed-in' });
                 return;
               }
@@ -950,7 +1026,7 @@ export function apply(ctx) {
                 sendJson(res, 400, { ok: false, error: 'invalid-id' });
                 return;
               }
-              const result = await callSessionApi(account, '/api/v0/chat_session/batch_update_pinned', {
+              const result = await callSessionApiWithCandidates('/api/v0/chat_session/batch_update_pinned', {
                 chat_session_ids: [id],
                 pinned,
               });

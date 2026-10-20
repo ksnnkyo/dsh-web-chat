@@ -4,7 +4,7 @@
 
 [![dsh-plugin](https://img.shields.io/badge/topic-dsh--plugin-4D6BFE)](https://github.com/topics/dsh-plugin)
 [![license](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
-[![tests](https://img.shields.io/badge/tests-14%20passed-brightgreen)](#开发)
+[![tests](https://img.shields.io/badge/tests-15%20passed-brightgreen)](#开发)
 
 ![DeepSeek 网页工作台：左侧是网页版会话列表，右侧是完整网页对话](docs/screenshot-desk.png)
 
@@ -19,7 +19,7 @@ DSH（DeepSeek Harness）桌面端插件。安装后，左侧栏「工作区」�
 - **侧栏会话列表**：网页版历史会话（标题 + 时间），20 秒自动刷新。
   - 悬停行显示 **置顶 / 删除**（与 DSH 工作区会话行同款交互；置顶同步 DeepSeek 云端，删除有确认弹窗）。
   - 点「会话」标题行任意位置折叠/展开；「显示更多」是会话列表内容的最后一行（跟着列表滚动，不固定），每次多加载 20 条。
-  - 未登录网页版时列表里显示「未登录，点击登录」按钮；登录过但拉取失败时显示「读取失败，点击重新加载」按钮。
+  - 未登录网页版时列表里显示「未登录，点击登录」按钮；登录态过期（`INVALID_TOKEN`）时显示「登录已过期，点击重新登录」；其他网络/WAF 失败显示「读取失败，点击重新加载」。
 - **用量与余额行（可开关）**：左侧栏账号头像/昵称正上方一行：`今日 312M · 总计 312M · 余额 ¥0.98`。
   - token 用量由 Host 半折叠本机全部会话日志得出，口径与对话页右下角用量 pill 一致（含缓存读 token）；悬停看输入/输出/缓存读/合计明细，点一下立即刷新，60 秒自动刷新。
   - 余额取自当前 DSH 登录的 DeepSeek 账号（充值余额 + 赠金，按币种展示；悬停看拆分），120 秒自动刷新；**余额低于 ¥1 时数值加粗、低于 ¥0.1 时变红**（token 数值不受影响）。
@@ -29,6 +29,7 @@ DSH（DeepSeek Harness）桌面端插件。安装后，左侧栏「工作区」�
   - 中文界面（DSH 渲染进程默认 `--lang=en-US`，插件会强制 DeepSeek 网页使用 `zh_CN`）。
 - **自带登录态持久化（默认）**：第一次在 DeepSeek 页里正常登录后，插件会把网页的 `localStorage`（含 `userToken`）、可读 cookie 和真实 UA 存到本机 `~/.dsh/deepseek-webdesk/session.json`（权限 600）；之后打开网页、重启 DSH 都会自动装回，**不需要额外插件、也不用反复登录**。
   - 兼容回退：如果本机装了 [`dsh-deepseek-web-login`](https://github.com/cv-superding/dsh-deepseek-web-login) 且还没有自己的快照，会先用它的登录态完成首登，然后自动落盘到上面那份快照。
+  - 读会话列表时**优先用自己的快照**（它随页面刷新，是最新 token），快照 token 被站点拒绝后再自动回退到 web-login 账号库。网页端会轮换 `userToken`，账号库里那份过期也不会导致列表一直读失败。
 - **接力到 Harness**：两种去向，各支持「最后一条回复 / 整段对话 / 当前一轮问答」：
   - **插入到刚才的任务**：切回原会话，把内容作为草稿插入输入框并聚焦（失败复制到剪贴板）。
   - **新建任务继续**：在当前工作区新建一个 Harness 任务，内容直接填进新任务输入框。
