@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { normalizeSessions } from '../index.js';
+import { normalizeSessions, normalizeSessionSnapshot, sessionToken } from '../index.js';
 
 const payload = {
   code: 0,
@@ -34,4 +34,21 @@ test('normalizeSessions maps the DeepSeek fetch_page payload', () => {
 test('normalizeSessions rejects unexpected payloads', () => {
   assert.throws(() => normalizeSessions(null), /unexpected DeepSeek session response/);
   assert.throws(() => normalizeSessions({ data: {} }), /unexpected DeepSeek session response/);
+});
+
+
+test('guest session snapshots are clamped and their userToken is readable', () => {
+  const snapshot = normalizeSessionSnapshot({
+    storage: { userToken: '{"value":"tok","__version":"0"}', theme: 'dark', bad: 42 },
+    cookies: ['smidV2=abc', 'broken'],
+    userAgent: 'Mozilla/5.0 Chrome/155',
+    at: '2026-10-20T00:00:00.000Z',
+  });
+  assert.notEqual(snapshot, null);
+  assert.deepEqual(snapshot.storage, { userToken: '{"value":"tok","__version":"0"}', theme: 'dark' });
+  assert.deepEqual(snapshot.cookies, ['smidV2=abc']);
+  assert.equal(snapshot.userAgent, 'Mozilla/5.0 Chrome/155');
+  assert.equal(sessionToken(snapshot), 'tok');
+  assert.equal(sessionToken({ storage: { userToken: 'bare-token' } }), 'bare-token');
+  assert.equal(normalizeSessionSnapshot({ storage: {}, cookies: [] }), null);
 });

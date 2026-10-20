@@ -22,7 +22,8 @@ DSH（DeepSeek Harness）桌面端插件。安装后，左侧栏「工作区」�
 - **完整网页对话**：点会话进入独立 DeepSeek 页，页面铺满主内容区。
   - 顶部是插件自己的头部：`DeepSeek · 当前会话标题` + 刷新 / 接力 / 在浏览器打开 / 右侧栏。
   - 中文界面（DSH 渲染进程默认 `--lang=en-US`，插件会强制 DeepSeek 网页使用 `zh_CN`）。
-- **复用 DSH 网页登录态**：如果装了 [`dsh-deepseek-web-login`](https://github.com/cv-superding/dsh-deepseek-web-login)，打开网页时会自动读取它已登录的账号（token + cookie + 真实 UA），直接进已登录状态，无需再登一次。
+- **自带登录态持久化（默认）**：第一次在 DeepSeek 页里正常登录后，插件会把网页的 `localStorage`（含 `userToken`）、可读 cookie 和真实 UA 存到本机 `~/.dsh/deepseek-webdesk/session.json`（权限 600）；之后打开网页、重启 DSH 都会自动装回，**不需要额外插件、也不用反复登录**。
+  - 兼容回退：如果本机装了 [`dsh-deepseek-web-login`](https://github.com/cv-superding/dsh-deepseek-web-login) 且还没有自己的快照，会先用它的登录态完成首登，然后自动落盘到上面那份快照。
 - **接力到 Harness**：两种去向，各支持「最后一条回复 / 整段对话 / 当前一轮问答」：
   - **插入到刚才的任务**：切回原会话，把内容作为草稿插入输入框并聚焦（失败复制到剪贴板）。
   - **新建任务继续**：在当前工作区新建一个 Harness 任务，内容直接填进新任务输入框。
@@ -52,8 +53,8 @@ dsh plugin --profile desktop add github:zneoxlab/dsh-deepseek-webdesk
 ## 依赖与联动
 
 - **必需**：DSH 桌面端的内嵌浏览器能力（`globalThis.dshDesktop.browser`）。
-- **可选**：[`dsh-deepseek-web-login`](https://github.com/cv-superding/dsh-deepseek-web-login) —— 提供网页登录态与账号库。装了它，DeepSeek 页打开即登录；没装也能用，在页面里手动登录即可（只是侧栏会话列表读不到）。
-- 插件 **Host 半** 读取 `~/.dsh/web-login/` 下当前账号，调用 DeepSeek 官方接口 `chat_session/fetch_page` 拉会话列表，再通过同源路由 `/dsh-deepseek-webdesk/api/sessions` 交给客户端渲染；token 只在本机请求头内使用，不落盘、不打印、不上报。
+- **可选**：[`dsh-deepseek-web-login`](https://github.com/cv-superding/dsh-deepseek-web-login) —— 仅作为首次登录态的兜底来源，不是必需依赖。
+- 插件 **Host 半** 优先用自己保存的 `~/.dsh/deepseek-webdesk/session.json`，没有时再读 `~/.dsh/web-login/` 的账号；拿到 token 后调用 DeepSeek 官方接口 `chat_session/fetch_page` 拉会话列表，通过同源路由 `/dsh-deepseek-webdesk/api/sessions` 交给客户端。token 只在本机请求头内使用，不打印、不上报。
 
 ## 开发
 
@@ -74,7 +75,7 @@ npm test        # node --test，Host 映射 + 客户端槽位注册
 
 ## 隐私
 
-- 会话列表与对话内容只在本机 DSH 进程与 DeepSeek 网页之间流转。
+- 会话列表与对话内容只在本机 DSH 进程与 DeepSeek 网页之间流转；登录快照只存本机 `~/.dsh/deepseek-webdesk/session.json`（chmod 600）。
 - 删除/置顶走 DeepSeek 网页端同款接口，操作的是你自己的账号数据。
 - 仓库里的截图已对个人会话标题打码。
 

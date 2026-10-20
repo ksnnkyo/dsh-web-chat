@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 
@@ -17,6 +17,10 @@ const SESSION_LIST_PATH = '/api/v0/chat_session/fetch_page';
 const CACHE_TTL_MS = 5_000;
 const REQUEST_TIMEOUT_MS = 12_000;
 const MAX_SESSIONS = 60;
+const DESK_DIR_NAME = 'deepseek-webdesk';
+const SESSION_FILE_NAME = 'session.json';
+const SESSION_VALUE_LIMIT = 200_000;
+const SESSION_ENTRY_LIMIT = 120;
 
 export const name = 'dsh-deepseek-webdesk';
 export const inject = ['webServer'];
@@ -72,6 +76,128 @@ function requestHeaders(account) {
     }
   }
   return headers;
+}
+
+function deskDir() {
+  return join(dshHome(), DESK_DIR_NAME);
+}
+
+function sessionFilePath() {
+  return join(deskDir(), SESSION_FILE_NAME);
+}
+
+function clampString(value, limit = SESSION_VALUE_LIMIT) {
+  return typeof value === 'string' ? value.slice(0, limit) : '';
+}
+
+/** Normalize a client-captured guest session snapshot; exported for tests. */
+export function normalizeSessionSnapshot(raw) {
+  if (raw === null || typeof raw !== 'object') return null;
+  const storage = {};
+  let count = 0;
+  const sourceStorage = raw.storage;
+  if (sourceStorage !== null && typeof sourceStorage === 'object') {
+    for (const key of Object.keys(sourceStorage)) {
+      if (count >= SESSION_ENTRY_LIMIT) break;
+      const value = sourceStorage[key];
+      if (typeof key !== 'string' || key === '' || typeof value !== 'string') continue;
+      storage[key] = clampString(value);
+      count += 1;
+    }
+  }
+  const cookies = [];
+  if (Array.isArray(raw.cookies)) {
+    for (const cookie of raw.cookies) {
+      if (cookies.length >= SESSION_ENTRY_LIMIT) break;
+      if (typeof cookie !== 'string') continue;
+      const item = cookie.trim();
+      if (item === '' || item.indexOf('=') <= 0) continue;
+      cookies.push(clampString(item, 4096));
+    }
+  }
+  const userAgent = clampString(raw.userAgent, 500);
+  const writes = [];
+  if (Array.isArray(raw.writes)) {
+    for (const entry of raw.writes) {
+      if (writes.length >= SESSION_ENTRY_LIMIT) break;
+      if (entry === null || typeof entry !== 'object') continue;
+      if (typeof entry.key !== 'string' || entry.key === '' || typeof entry.value !== 'string') continue;
+      writes.push({ key: entry.key, value: clampString(entry.value) });
+    }
+  }
+  if (Object.keys(storage).length === 0 && cookies.length === 0 && writes.length === 0) return null;
+  return { storage, cookies, writes, userAgent, at: typeof raw.at === 'string' ? raw.at : new Date().toISOString() };
+}
+
+function readOwnSession() {
+  try {
+    const file = sessionFilePath();
+    if (!existsSync(file)) return null;
+    return normalizeSessionSnapshot(JSON.parse(readFileSync(file, 'utf8')));
+  } catch {
+    return null;
+  }
+}
+
+function writeOwnSession(raw) {
+  const snapshot = normalizeSessionSnapshot(raw);
+  if (snapshot === null) return null;
+  const file = sessionFilePath();
+  mkdirSync(deskDir(), { recursive: true });
+  writeFileSync(file, JSON.stringify({ ...snapshot, at: new Date().toISOString() }, null, 2) + '\n', { mode: 0o600 });
+  cache = { at: 0, value: null };
+  return snapshot;
+}
+
+function clearOwnSession() {
+  try {
+    unlinkSync(sessionFilePath());
+  } catch {
+    /* already gone */
+  }
+  cache = { at: 0, value: null };
+}
+
+/** Read the `userToken` value out of a captured guest snapshot. */
+export function sessionToken(snapshot) {
+  if (snapshot === null || typeof snapshot !== 'object') return '';
+  const readValue = (raw) => {
+    if (typeof raw !== 'string' || raw === '') return '';
+    try {
+      const parsed = JSON.parse(raw);
+      if (parsed !== null && typeof parsed === 'object' && typeof parsed.value === 'string') return parsed.value;
+    } catch {
+      /* a bare token is valid too */
+    }
+    return raw;
+  };
+  for (const entry of Array.isArray(snapshot.writes) ? snapshot.writes : []) {
+    if (entry !== null && typeof entry === 'object' && entry.key === 'userToken') {
+      const token = readValue(entry.value);
+      if (token !== '') return token;
+    }
+  }
+  if (snapshot.storage !== null && typeof snapshot.storage === 'object' && typeof snapshot.storage.userToken === 'string') {
+    return readValue(snapshot.storage.userToken);
+  }
+  return '';
+}
+
+/** Credentials for DeepSeek web API calls: own captured session first, web-login account second. */
+function webCredentials() {
+  const own = readOwnSession();
+  const token = sessionToken(own);
+  if (token !== '') {
+    return {
+      token,
+      userAgent: own.userAgent || '',
+      cookie: Array.isArray(own.cookies) ? own.cookies.join('; ') : '',
+      extraHeaders: {},
+      source: 'local',
+    };
+  }
+  const account = activeAccount();
+  return account === null ? null : { ...account, source: 'web-login' };
 }
 
 /** Normalize one `fetch_page` payload; exported for tests. */
@@ -227,6 +353,22 @@ export function apply(ctx) {
           const url = new URL(String(req.url ?? '/'), 'http://127.0.0.1');
           const route = url.pathname.slice(API_PREFIX.length) || '/';
           try {
+            if (req.method === 'GET' && (route === '/auth/session' || route === '/auth/session/')) {
+              const snapshot = readOwnSession();
+              sendJson(res, 200, snapshot === null ? { ok: false, error: 'empty' } : { ok: true, session: snapshot });
+              return;
+            }
+            if (req.method === 'POST' && (route === '/auth/session' || route === '/auth/session/')) {
+              const body = await readJsonBody(req);
+              const snapshot = writeOwnSession(body);
+              sendJson(res, snapshot === null ? 400 : 200, snapshot === null ? { ok: false, error: 'invalid' } : { ok: true, at: snapshot.at });
+              return;
+            }
+            if (req.method === 'DELETE' && (route === '/auth/session' || route === '/auth/session/')) {
+              clearOwnSession();
+              sendJson(res, 200, { ok: true });
+              return;
+            }
             if (req.method === 'GET' && (route === '/sessions' || route === '/sessions/')) {
               const count = Number(url.searchParams.get('count'));
               sendJson(res, 200, await listWebSessions(count));

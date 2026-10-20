@@ -338,6 +338,71 @@ window.__ModuleLoader__.load({
       }
     }
 
+    /** 读取本插件自己保存的登录态（优先于 dsh-deepseek-web-login）。 */
+    async function fetchOwnSession() {
+      try {
+        const response = await fetch('/dsh-deepseek-webdesk/api/auth/session', { credentials: 'same-origin', cache: 'no-store' });
+        if (!response.ok) return null;
+        const payload = await response.json().catch(() => null);
+        const session = payload !== null && payload !== undefined && payload.ok === true ? payload.session : null;
+        if (session === null || typeof session !== 'object') return null;
+        const cookie = Array.isArray(session.cookies) ? session.cookies.join('; ') : typeof session.cookie === 'string' ? session.cookie : '';
+        return normalizeSharedLoginSession({
+          ok: true,
+          writes: Array.isArray(session.writes) ? session.writes : [],
+          storage: session.storage !== null && typeof session.storage === 'object' ? session.storage : {},
+          cookie,
+          userAgent: typeof session.userAgent === 'string' ? session.userAgent : '',
+        });
+      } catch (error) {
+        return null;
+      }
+    }
+
+    /** 页面内抓取当前登录态（localStorage + 可读 cookie + UA）。序列化执行。 */
+    function captureSessionInGuest() {
+      const storage = {};
+      try {
+        for (let index = 0; index < window.localStorage.length; index += 1) {
+          const key = window.localStorage.key(index);
+          if (typeof key === 'string' && key !== '') storage[key] = String(window.localStorage.getItem(key) ?? '');
+        }
+      } catch (error) {
+        /* storage may be unavailable */
+      }
+      const cookies = [];
+      try {
+        for (const part of String(document.cookie || '').split(';')) {
+          const item = part.trim();
+          if (item !== '' && item.indexOf('=') > 0) cookies.push(item);
+        }
+      } catch (error) {
+        /* cookies may be unavailable */
+      }
+      return { storage, cookies, userAgent: String(navigator.userAgent || '') };
+    }
+
+    /** 把页面里的登录态存回 ~/.dsh/deepseek-webdesk/session.json，重启后自动恢复。 */
+    async function saveOwnSession(view) {
+      if (view === null) return false;
+      try {
+        const snapshot = await view.executeJavaScript('(' + captureSessionInGuest.toString() + ')()', false);
+        if (snapshot === null || typeof snapshot !== 'object') return false;
+        const storage = snapshot.storage;
+        if (storage === null || typeof storage !== 'object') return false;
+        const raw = typeof storage.userToken === 'string' ? storage.userToken : '';
+        if (raw === '' || raw.indexOf('"value":null') >= 0) return false;
+        const response = await fetch('/dsh-deepseek-webdesk/api/auth/session', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(snapshot),
+        });
+        return response.ok;
+      } catch (error) {
+        return false;
+      }
+    }
+
     /** 页面内安装：写 localStorage / 非 HttpOnly cookie，并强制中文界面。序列化后执行，不能引用外层。 */
     function installSessionInGuest(payload) {
       const isRecord = (value) => value !== null && typeof value === 'object';
@@ -424,6 +489,7 @@ window.__ModuleLoader__.load({
     let lease = null;
     let offOpenRequested = null;
     let sharedSession = null;
+    let sharedSessionSource = '';
     let started = false;
     let starting = false;
     let prepared = false;
@@ -465,7 +531,10 @@ window.__ModuleLoader__.load({
       if (pendingConversationId !== '') applyPendingConversation();
       window.setTimeout(() => {
         if (view === null) return;
-        void probeAuth(view).then((auth) => emit({ auth: auth === 'in' || auth === 'out' ? auth : 'unknown' }));
+        void probeAuth(view).then((auth) => {
+          emit({ auth: auth === 'in' || auth === 'out' ? auth : 'unknown' });
+          if (auth === 'in' && view !== null) void saveOwnSession(view);
+        });
       }, 1500);
       window.setTimeout(() => {
         void refreshSessionList();
@@ -479,6 +548,7 @@ window.__ModuleLoader__.load({
       const current = view;
       const auth = await probeAuth(current);
       emit({ auth: auth === 'in' || auth === 'out' ? auth : 'unknown' });
+      if (auth === 'in') void saveOwnSession(current);
       let reload = false;
       if (!loginApplied && sharedSession !== null) {
         try {
@@ -491,7 +561,7 @@ window.__ModuleLoader__.load({
             if (result !== null && typeof result === 'object' && result.applied === true) {
               loginApplied = true;
               reload = true;
-              emit({ notice: '已沿用 DSH 网页登录态' });
+              emit({ notice: sharedSessionSource === 'local' ? '已恢复本机 DeepSeek 登录态' : '已沿用 DSH 网页登录态' });
             }
           }
         } catch (error) {
@@ -518,7 +588,7 @@ window.__ModuleLoader__.load({
         }, 150);
       }
       window.setTimeout(() => {
-        if (state.notice === '已沿用 DSH 网页登录态') emit({ notice: '' });
+        if (state.notice === '已沿用 DSH 网页登录态' || state.notice === '已恢复本机 DeepSeek 登录态') emit({ notice: '' });
       }, 5000);
     }
 
@@ -548,7 +618,14 @@ window.__ModuleLoader__.load({
               offOpenRequested = null;
             }
           }
-          sharedSession = await fetchSharedLoginSession();
+          const ownSession = await fetchOwnSession();
+          if (ownSession !== null) {
+            sharedSession = ownSession;
+            sharedSessionSource = 'local';
+          } else {
+            sharedSession = await fetchSharedLoginSession();
+            sharedSessionSource = sharedSession !== null ? 'shared' : '';
+          }
           const element = document.createElement('webview');
           element.className = 'dws-webview';
           element.setAttribute('partition', reservation.partition);
@@ -2027,9 +2104,18 @@ window.__ModuleLoader__.load({
         const titleTimer = window.setInterval(() => {
           if (pageOpen) syncGuestTitle();
         }, 4000);
+        const authTimer = window.setInterval(() => {
+          if (!pageOpen || view === null) return;
+          void probeAuth(view).then((auth) => {
+            if (auth !== 'in' && auth !== 'out') return;
+            emit({ auth });
+            if (auth === 'in' && view !== null) void saveOwnSession(view);
+          });
+        }, 30000);
         return () => {
           window.clearInterval(timer);
           window.clearInterval(titleTimer);
+          window.clearInterval(authTimer);
         };
       }, 'dsh-deepseek-webdesk: session list poll');
       ctx.effect(
