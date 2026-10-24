@@ -52,13 +52,13 @@
   },
   "author": "ksnnkyo",
   "license": "MIT",
-  "homepage": "https://github.com/ksnnkyo/dsh-deepseek-webdesk",
+  "homepage": "https://github.com/ksnnkyo/dsh-web-chat",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/ksnnkyo/dsh-deepseek-webdesk.git"
+    "url": "git+https://github.com/ksnnkyo/dsh-web-chat.git"
   },
   "bugs": {
-    "url": "https://github.com/ksnnkyo/dsh-deepseek-webdesk/issues"
+    "url": "https://github.com/ksnnkyo/dsh-web-chat/issues"
   },
   "devDependencies": {
     "happy-dom": "^21.0.4"

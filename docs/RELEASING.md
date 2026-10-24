@@ -7,4 +7,4 @@
 5. 确认注册表可读取该版本后运行 `npm run market:update`，它只使用与包名、版本、仓库及 DSH 元数据匹配的真实发布记录生成索引。未发布时保留空索引，不展示虚假的可安装版本。
 6. 提交生成的市场索引后，再向用户提供真实市场地址。
 
-本地源码目录仍为 dsh-deepseek-webdesk，GitHub 仓库地址保留真实现有地址；包名和界面名称均为 dsh-web-chat。
+本地源码目录仍为 dsh-deepseek-webdesk，GitHub 仓库已改名为 dsh-web-chat；包名和界面名称均为 dsh-web-chat。

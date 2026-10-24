@@ -44,7 +44,7 @@ dsh plugin --profile desktop add /absolute/path/dsh-web-chat-0.1.0.tgz
 
 `npm test` 执行回归测试；`npm run check` 检查语法；`npm run release:check` 运行检查、测试和打包预览。发布步骤见 [发布说明](docs/RELEASING.md)。npm 包只包含运行文件、语言文件、图标及公开说明，不包含测试、开发计划或历史截图。
 
-源码仓库：[ksnnkyo/dsh-deepseek-webdesk](https://github.com/ksnnkyo/dsh-deepseek-webdesk)。仓库目录名与包名可以不同。
+源码仓库：[ksnnkyo/dsh-web-chat](https://github.com/ksnnkyo/dsh-web-chat)。仓库目录名与包名可以不同。
 
 ## 来源与许可
 
