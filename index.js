@@ -12,21 +12,21 @@ import { dirname, join } from 'node:path';
  * machine and is never logged.
  */
 
-const API_PREFIX = '/dsh-deepseek-webdesk/api';
+const API_PREFIX = '/dsh-web-chat/api';
 const DEEPSEEK_ORIGIN = 'https://chat.deepseek.com';
 const SESSION_LIST_PATH = '/api/v0/chat_session/fetch_page';
 const CACHE_TTL_MS = 5_000;
 const REQUEST_TIMEOUT_MS = 12_000;
 const MAX_SESSIONS = 60;
-const DESK_DIR_NAME = 'deepseek-webdesk';
+const DESK_DIR_NAME = 'dsh-web-chat';
 const SESSION_FILE_NAME = 'session.json';
 const SESSION_VALUE_LIMIT = 200_000;
 const SESSION_ENTRY_LIMIT = 120;
 const HOTKEY_FILE_NAME = 'hotkey.json';
 const HELPER_DIR_NAME = 'helper';
-const USAGE_CACHE_DIR = 'deepseek-webdesk';
+const USAGE_CACHE_DIR = 'dsh-web-chat';
 const USAGE_CACHE_FILE = 'usage-cache.json';
-const USAGE_CACHE_VERSION = 1;
+const USAGE_CACHE_VERSION = 2;
 const BUCKET_KEYS = ['input', 'output', 'cacheRead', 'cacheWrite'];
 const HOTKEY_KEYS = /^([A-Z]|[0-9]|Space|F([1-9]|1[0-2]))$/;
 const HOTKEY_MODIFIERS = ['control', 'alt', 'shift', 'meta'];
@@ -40,7 +40,7 @@ const MAC_MODS = { control: 4096, alt: 2048, shift: 512, meta: 256 };
 const WIN_MODS = { alt: 1, control: 2, shift: 4, meta: 8 };
 const WIN_KEYS = { Space: 0x20, F1: 0x70, F2: 0x71, F3: 0x72, F4: 0x73, F5: 0x74, F6: 0x75, F7: 0x76, F8: 0x77, F9: 0x78, F10: 0x79, F11: 0x7a, F12: 0x7b };
 
-export const name = 'dsh-deepseek-webdesk';
+export const name = 'dsh-web-chat';
 export const inject = ['webServer'];
 
 function dshHome() {
@@ -167,6 +167,32 @@ function writeOwnSession(raw) {
   return snapshot;
 }
 
+/** Copy validated legacy data once. Never modify the old plugin or overwrite new data. */
+export function migrateLegacyData(home = dshHome()) {
+  const migrated = { session: false, hotkey: false };
+  const previous = join(home, 'deepseek-webdesk');
+  const destination = join(home, DESK_DIR_NAME);
+  const entries = [
+    { file: SESSION_FILE_NAME, key: 'session', normalize: normalizeSessionSnapshot },
+    { file: HOTKEY_FILE_NAME, key: 'hotkey', normalize: normalizeHotkeyConfig },
+  ];
+  for (const entry of entries) {
+    const target = join(destination, entry.file);
+    if (existsSync(target)) continue;
+    try {
+      const raw = readJsonFile(join(previous, entry.file));
+      const value = entry.normalize(raw);
+      if (value === null) continue;
+      mkdirSync(destination, { recursive: true, mode: 0o700 });
+      writeFileSync(target, JSON.stringify(value, null, 2) + '\n', { mode: 0o600, flag: 'wx' });
+      migrated[entry.key] = true;
+    } catch (error) {
+      // Invalid/missing legacy files do not prevent a fresh login or overwrite current data.
+    }
+  }
+  return migrated;
+}
+
 function clearOwnSession() {
   try {
     unlinkSync(sessionFilePath());
@@ -283,7 +309,7 @@ export function normalizeSessions(payload) {
 }
 
 let cache = { at: 0, value: null };
-let inflight = null;
+const inflight = new Map();
 
 /** A stored token the site no longer accepts (as opposed to a network or WAF failure). */
 function isTokenRejection(payload) {
@@ -298,16 +324,16 @@ function isTokenRejection(payload) {
  * failure so the client can render a useful empty state.
  */
 export async function listWebSessions(count) {
+  const limitSource = Number(count);
+  const limit = Number.isFinite(limitSource) ? Math.max(1, Math.min(MAX_SESSIONS, Math.floor(limitSource))) : 30;
   const now = Date.now();
-  if (cache.value !== null && now - cache.at < CACHE_TTL_MS) return cache.value;
-  if (inflight !== null) return inflight;
+  if (cache.value !== null && cache.limit === limit && now - cache.at < CACHE_TTL_MS) return cache.value;
+  if (inflight.has(limit)) return inflight.get(limit);
   const candidates = credentialCandidates();
   if (candidates.length === 0) {
     return { ok: false, error: 'not-signed-in', sessions: [], hasMore: false };
   }
-  const limitSource = Number(count);
-  const limit = Number.isFinite(limitSource) ? Math.max(1, Math.min(MAX_SESSIONS, Math.floor(limitSource))) : 30;
-  inflight = (async () => {
+  const request = (async () => {
     try {
       let lastError = 'request-failed';
       for (const account of candidates) {
@@ -338,7 +364,7 @@ export async function listWebSessions(count) {
             source: account.source,
             at: new Date().toISOString(),
           };
-          cache = { at: Date.now(), value };
+          cache = { at: Date.now(), value, limit };
           return value;
         } catch (error) {
           return {
@@ -354,10 +380,11 @@ export async function listWebSessions(count) {
       }
       return { ok: false, error: lastError, sessions: [], hasMore: false };
     } finally {
-      inflight = null;
+      inflight.delete(limit);
     }
   })();
-  return inflight;
+  inflight.set(limit, request);
+  return request;
 }
 
 function readJsonBody(req) {
@@ -398,7 +425,9 @@ async function callSessionApi(account, path, body) {
     signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   const payload = await response.json().catch(() => null);
+  if (isTokenRejection(payload) || response.status === 401 || response.status === 403) return { ok: false, error: 'token-expired' };
   if (!response.ok || payload === null) return { ok: false, error: 'http-' + response.status };
+  if (payload.code !== 0) return { ok: false, error: 'api-' + (payload.code ?? 'invalid-response') };
   const bizCode = payload.data !== null && typeof payload.data === 'object' ? payload.data.biz_code : undefined;
   if (bizCode !== undefined && bizCode !== 0) return { ok: false, error: 'biz-' + bizCode };
   return { ok: true };
@@ -414,7 +443,7 @@ async function callSessionApiWithCandidates(path, body) {
       const result = await callSessionApi(account, path, body);
       if (result.ok) return result;
       last = result;
-      if (!/^(biz-|http-40[13]$)/.test(result.error)) return last;
+      if (!/^(token-expired$|biz-|http-40[13]$)/.test(result.error)) return last;
     } catch (error) {
       return {
         ok: false,
@@ -535,7 +564,7 @@ func CarbonRunApplicationEventLoop()
 let arguments = CommandLine.arguments
 let code = UInt32(arguments.count > 1 ? arguments[1] : "49") ?? 49
 let modifiers = UInt32(arguments.count > 2 ? arguments[2] : "2048") ?? 2048
-var hotKeyID = EventHotKeyID(signature: OSType(0x44534857), id: 1)
+var hotKeyID = EventHotKeyID(signature: OSType(0x44534348), id: 1)
 RegisterEventHotKey(code, modifiers, hotKeyID, GetApplicationEventTarget(), 0, &hotKeyRef)
 var eventType = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
 InstallEventHandler(GetApplicationEventTarget(), { (_, _, _) -> OSStatus in
@@ -552,7 +581,7 @@ using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Windows.Forms;
 
-public class DshHotKeyForm : Form {
+public class DshWebChatHotKeyForm : Form {
   [DllImport("user32.dll")] static extern bool RegisterHotKey(IntPtr hWnd, int id, uint fsModifiers, uint vk);
   [DllImport("user32.dll")] static extern bool ShowWindow(IntPtr hWnd, int nCmdShow);
   [DllImport("user32.dll")] static extern bool SetForegroundWindow(IntPtr hWnd);
@@ -561,7 +590,7 @@ public class DshHotKeyForm : Form {
   int id = 0x4453;
   uint modifiers;
   uint vk;
-  public DshHotKeyForm(uint modifiers, uint vk) {
+  public DshWebChatHotKeyForm(uint modifiers, uint vk) {
     this.modifiers = modifiers;
     this.vk = vk;
     ShowInTaskbar = false;
@@ -591,7 +620,7 @@ public class DshHotKeyForm : Form {
   }
 }
 "@
-$form = New-Object DshHotKeyForm -ArgumentList ([uint32]$Modifiers), ([uint32]$VirtualKey)
+$form = New-Object DshWebChatHotKeyForm -ArgumentList ([uint32]$Modifiers), ([uint32]$VirtualKey)
 [System.Windows.Forms.Application]::Run($form)
 `;
 
@@ -635,8 +664,8 @@ function startHotkeyHelper() {
   helperError = '';
   if (process.platform === 'darwin') {
     const dir = helperDir();
-    const binary = join(dir, 'dsh-hotkey');
-    const source = join(dir, 'dsh-hotkey.swift');
+    const binary = join(dir, 'dsh-web-chat-hotkey');
+    const source = join(dir, 'dsh-web-chat-hotkey.swift');
     mkdirSync(dir, { recursive: true });
     const needBuild = !existsSync(binary) || !existsSync(source) || readFileSync(source, 'utf8') !== MAC_HELPER_SOURCE;
     if (needBuild) {
@@ -686,7 +715,7 @@ function startHotkeyHelper() {
   }
   if (process.platform === 'win32') {
     const dir = helperDir();
-    const script = join(dir, 'dsh-hotkey.ps1');
+    const script = join(dir, 'dsh-web-chat-hotkey.ps1');
     mkdirSync(dir, { recursive: true });
     writeFileSync(script, WIN_HELPER_SOURCE, 'utf8');
     const { vk, modifiers } = winAccelerator(config);
@@ -792,14 +821,20 @@ export function foldSessionEvents(events, state) {
     const turn = data.turn;
     const step = data.step;
     const buckets = bucketsFromUsage(usage);
-    const previous = next.last !== null && next.last.turn === turn && next.last.step === step ? next.last.buckets : null;
-    if (previous !== null && bucketsEqual(previous, buckets)) continue;
-    for (const key of BUCKET_KEYS) next.totals[key] = Math.max(0, next.totals[key] - (previous === null ? 0 : previous[key])) + buckets[key];
+    const previous = next.last !== null && next.last.turn === turn && next.last.step === step ? next.last : null;
     const day = dayKey(event.time);
+    if (previous !== null && previous.day === day && bucketsEqual(previous.buckets, buckets)) continue;
+    for (const key of BUCKET_KEYS) next.totals[key] = Math.max(0, next.totals[key] - (previous === null ? 0 : previous.buckets[key])) + buckets[key];
+    if (previous !== null) {
+      const previousDay = previous.day ?? day;
+      const oldBuckets = next.days[previousDay] ?? emptyBuckets();
+      for (const key of BUCKET_KEYS) oldBuckets[key] = Math.max(0, oldBuckets[key] - previous.buckets[key]);
+      next.days[previousDay] = oldBuckets;
+    }
     const dayBuckets = next.days[day] ?? emptyBuckets();
-    for (const key of BUCKET_KEYS) dayBuckets[key] = Math.max(0, dayBuckets[key] - (previous === null ? 0 : previous[key])) + buckets[key];
+    for (const key of BUCKET_KEYS) dayBuckets[key] += buckets[key];
     next.days[day] = dayBuckets;
-    next.last = { turn, step, buckets };
+    next.last = { turn, step, buckets, day };
   }
   return next;
 }
@@ -935,6 +970,7 @@ export async function readBalance(account, client) {
 }
 
 export function apply(ctx) {
+  migrateLegacyData();
   let usage = Object.create(null);
   let usageAt = 0;
   let usageError = '';
@@ -1077,10 +1113,10 @@ export function apply(ctx) {
           }
         },
       }),
-    'dsh-deepseek-webdesk: api',
+    'dsh-web-chat: api',
   );
   ctx.effect(() => {
     startHotkeyHelper();
     return () => stopHotkeyHelper();
-  }, 'dsh-deepseek-webdesk: global hotkey helper');
+  }, 'dsh-web-chat: global hotkey helper');
 }

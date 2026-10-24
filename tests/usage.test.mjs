@@ -179,3 +179,15 @@ test('balance reports signed-out and failed states without inventing a zero', as
   };
   assert.deepEqual(await readBalance(failed, {}), { status: 'failed' });
 });
+test('replacement usage moves from the old local day to the new day across midnight', () => {
+  for (const finalInput of [100, 150]) {
+    const state = createUsageState();
+    foldSessionEvents([
+      assistant(1, 1, 1, { inputTokens: 100 }, at(2026, 10, 23, 23)),
+      assistant(2, 1, 1, { inputTokens: finalInput }, at(2026, 10, 24, 0)),
+    ], state);
+    assert.equal(state.totals.input, finalInput);
+    assert.equal(state.days['2026-10-23'].input, 0);
+    assert.equal(state.days['2026-10-24'].input, finalInput);
+  }
+});

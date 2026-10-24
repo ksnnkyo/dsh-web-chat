@@ -93,20 +93,20 @@ test('client bundle registers sidebar entry, header menu and persistent overlay 
   assert.deepEqual([...byName.keys()].sort(), ['main', 'settings.general.item', 'shell.overlay', 'sidebar.footer.action']);
 
   const entry = byName.get('sidebar.footer.action');
-  assert.equal(entry.options.id, 'deepseek-web-session-entry');
+  assert.equal(entry.options.id, 'dsh-web-chat-entry');
   assert.equal(typeof entry.component, 'function');
 
   const page = byName.get('main');
-  assert.equal(page.options.key, 'deepseek-web-session');
+  assert.equal(page.options.key, 'dsh-web-chat-page');
   assert.equal(typeof page.component, 'function');
 
   const settingsRows = registered.filter((entry) => entry.options.name === 'settings.general.item');
   const settingsIds = settingsRows.map((entry) => entry.options.id).sort();
-  assert.deepEqual(settingsIds, ['dsh-deepseek-webdesk-hotkey', 'dsh-deepseek-webdesk-usage-row']);
+  assert.deepEqual(settingsIds, ['dsh-web-chat-hotkey', 'dsh-web-chat-usage-row']);
   for (const settingsRow of settingsRows) assert.equal(typeof settingsRow.component, 'function');
 
   const host = byName.get('shell.overlay');
-  assert.equal(host.options.id, 'deepseek-web-session-host');
+  assert.equal(host.options.id, 'dsh-web-chat-host');
   assert.equal(typeof host.component, 'function');
 
   assert.match(source, /async function extractInGuest/);

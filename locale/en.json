@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "DeepSeek Web Desk",
-    "description": "Lists DeepSeek web conversations in the DSH sidebar, opens the full web chat, and hands off to the current or a new task."
+    "title": "dsh-web-chat",
+    "description": "DeepSeek web conversations, local groups and reviewed task handoff drafts in DeepSeek Harness."
   }
 }

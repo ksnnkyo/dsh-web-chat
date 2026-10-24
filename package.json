@@ -1,9 +1,9 @@
 {
-  "name": "dsh-deepseek-webdesk",
-  "version": "0.12.2",
+  "name": "dsh-web-chat",
+  "version": "0.1.0",
   "private": false,
   "type": "module",
-  "description": "DeepSeek Web Desk for DSH: 在左侧栏拉出 DeepSeek 网页版会话列表，点一条就在主区域打开完整网页对话（复用 DSH 网页登录态、中文界面），并可接力到当前任务或新建任务。",
+  "description": "dsh-web-chat：在 DeepSeek Harness 中管理 DeepSeek 网页会话、分组，并将对话整理为可预览的任务草稿。",
   "keywords": [
     "dsh-plugin",
     "deepseek",
@@ -30,7 +30,8 @@
     "icon.svg",
     "README.md",
     "LICENSE",
-    "docs"
+    "NOTICE.md",
+    "CHANGELOG.md"
   ],
   "dsh": {
     "manifestVersion": 1,
@@ -43,16 +44,30 @@
     }
   },
   "scripts": {
-    "test": "node --test tests/*.test.mjs"
+    "test": "node --test tests/*.test.mjs",
+    "check": "node --check index.js && node --check client.js && node --check scripts/update-market.mjs",
+    "release:check": "npm run check && npm test && npm pack --dry-run",
+    "prepublishOnly": "npm run release:check",
+    "market:update": "node scripts/update-market.mjs"
   },
-  "author": "zneoxlab",
+  "author": "ksnnkyo",
   "license": "MIT",
-  "homepage": "https://github.com/zneoxlab/dsh-deepseek-webdesk",
+  "homepage": "https://github.com/ksnnkyo/dsh-deepseek-webdesk",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/zneoxlab/dsh-deepseek-webdesk.git"
+    "url": "git+https://github.com/ksnnkyo/dsh-deepseek-webdesk.git"
   },
   "bugs": {
-    "url": "https://github.com/zneoxlab/dsh-deepseek-webdesk/issues"
+    "url": "https://github.com/ksnnkyo/dsh-deepseek-webdesk/issues"
+  },
+  "devDependencies": {
+    "happy-dom": "^21.0.4"
+  },
+  "contributors": [
+    "zneoxlab"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   }
 }

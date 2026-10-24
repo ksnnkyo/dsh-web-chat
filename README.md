@@ -1,128 +1,51 @@
-# dsh-deepseek-webdesk
+# dsh-web-chat
 
-> **DeepSeek 网页工作台 for DeepSeek Harness (DSH)** — 把 DeepSeek 网页版的会话列表搬进 DSH 侧栏，点开就是完整的网页对话，并支持把对话接力到当前任务或新建任务。
+DeepSeek Harness 桌面端插件：在侧栏管理 DeepSeek 网页会话，在主区域阅读和继续对话，并把选定内容交给 Harness 任务。
 
-[![dsh-plugin](https://img.shields.io/badge/topic-dsh--plugin-4D6BFE)](https://github.com/topics/dsh-plugin)
-[![license](https://img.shields.io/badge/license-MIT-green.svg)](./LICENSE)
-[![tests](https://img.shields.io/badge/tests-15%20passed-brightgreen)](#开发)
-
-![DeepSeek 网页工作台：左侧是网页版会话列表，右侧是完整网页对话](docs/screenshot-desk.png)
-
-## 它是什么
-
-DSH（DeepSeek Harness）桌面端插件。安装后，左侧栏「工作区」下面会多出一块 **「会话」**，直接列出你 DeepSeek 网页版里的历史会话；点任意一条，主区域打开完整的 `chat.deepseek.com`，并自动跳到那条对话。
-
-不是浮层、不是侧栏面板、也不是新开浏览器——它复用 DSH 自带的内嵌浏览器租约，并把网页登录态一起带过来。
+包名与界面名称均为 **dsh-web-chat**，独立版本从 **0.1.0** 开始。目前为本地待发布版本。
 
 ## 功能
 
-- **侧栏会话列表**：网页版历史会话（标题 + 时间），20 秒自动刷新。
-  - 悬停行显示 **置顶 / 删除**（与 DSH 工作区会话行同款交互；置顶同步 DeepSeek 云端，删除有确认弹窗）。
-  - 点「会话」标题行任意位置折叠/展开；「显示更多」是会话列表内容的最后一行（跟着列表滚动，不固定），每次多加载 20 条。
-  - 未登录网页版时列表里显示「未登录，点击登录」按钮；登录态过期（`INVALID_TOKEN`）时显示「登录已过期，点击重新登录」；其他网络/WAF 失败显示「读取失败，点击重新加载」。
-- **用量与余额行（可开关）**：左侧栏账号头像/昵称正上方一行：`今日 312M · 总计 312M · 余额 ¥0.98`。
-  - token 用量由 Host 半折叠本机全部会话日志得出，口径与对话页右下角用量 pill 一致（含缓存读 token）；悬停看输入/输出/缓存读/合计明细，点一下立即刷新，60 秒自动刷新。
-  - 余额取自当前 DSH 登录的 DeepSeek 账号（充值余额 + 赠金，按币种展示；悬停看拆分），120 秒自动刷新；**余额低于 ¥1 时数值加粗、低于 ¥0.1 时变红**（token 数值不受影响）。
-  - 在 **设置 → 通用 → 侧栏显示用量与余额** 里开关；侧栏收起成 56px 轨道时自动隐藏。
-- **完整网页对话**：点会话进入独立 DeepSeek 页，页面铺满主内容区。
-  - 顶部是插件自己的头部：`DeepSeek · 当前会话标题` + 刷新 / 接力 / 在浏览器打开 / 右侧栏。
-  - 中文界面（DSH 渲染进程默认 `--lang=en-US`，插件会强制 DeepSeek 网页使用 `zh_CN`）。
-- **自带登录态持久化（默认）**：第一次在 DeepSeek 页里正常登录后，插件会把网页的 `localStorage`（含 `userToken`）、可读 cookie 和真实 UA 存到本机 `~/.dsh/deepseek-webdesk/session.json`（权限 600）；之后打开网页、重启 DSH 都会自动装回，**不需要额外插件、也不用反复登录**。
-  - 兼容回退：如果本机装了 [`dsh-deepseek-web-login`](https://github.com/cv-superding/dsh-deepseek-web-login) 且还没有自己的快照，会先用它的登录态完成首登，然后自动落盘到上面那份快照。
-  - 读会话列表时**优先用自己的快照**（它随页面刷新，是最新 token），快照 token 被站点拒绝后再自动回退到 web-login 账号库。网页端会轮换 `userToken`，账号库里那份过期也不会导致列表一直读失败。
-- **接力到 Harness**：两种去向，各支持「最后一条回复 / 整段对话 / 当前一轮问答」：
-  - **插入到刚才的任务**：切回原会话，把内容作为草稿插入输入框并聚焦（失败复制到剪贴板）。
-  - **新建任务继续**：在当前工作区新建一个 Harness 任务，内容直接填进新任务输入框。
-- **单选中态**：进入 DeepSeek 页时工作区会话会取消选中，不会出现两个选中状态；点工作区任务即离开 DeepSeek 页。
-- **可拖动窗口**：DeepSeek 页顶部工具条是窗口拖动区域（按住拖动即可移动整个 DSH 窗口）；侧栏「会话」标题行整行可点击收起/展开列表，`＋` 按钮开新对话。
-- **全局唤出快捷键（可选附加组件）**：在 **设置 → 通用 → 全局唤出 DSH** 里开启/关闭、点「修改」录制新组合；默认 **macOS `⌥ Space`、Windows `Alt+Space`**。任意页面按一下唤出 DSH，再按一下隐藏。
-  - `⌘W` 关掉窗口后也能唤回：助手检测 DSH 是否有可见窗口，没有就用 `dsh://open` 让 DSH 重新创建/聚焦主窗口（已实测）。
-  - 实现：插件 Host 会编译并启动一个本地原生小助手（macOS 用 Swift 的 Carbon 全局热键，Windows 用 PowerShell + WinForms 全局热键），由它显示/隐藏整个 DSH 窗口；不需要给 DSH 主程序提权，也不依赖系统“聚焦”功能。
-  - 助手二进制只在首次启用时编译到 `~/.dsh/deepseek-webdesk/helper/`（本机），卸载/停用插件后进程退出。
-
-![DeepSeek 页（页面区域）](docs/screenshot-page.png)
+- 网页会话列表、搜索、置顶、删除和本地分组。
+- 会话区与工作区按约 40% / 60% 分配可用列表高度，各自滚动；收起会话区后工作区获得更多空间。
+- 隐藏原网页的重复导航与会话列表；初始化完成后再显示对话，减少首次打开时的页面闪动。
+- “交给 Harness”支持最近一轮、最后一条回复或整段对话，选择工作区或返回上一个任务，并在预览后填入草稿。保留已有草稿，不自动发送；读取不完整时提示。
+- 本机登录态持久化、用量与余额显示、可配置快捷键。
 
 ## 安装
 
-需要 DSH 桌面端（>= 0.2.1-rc.2）。
+需要 Node.js 24+、DeepSeek Harness 0.2.1-rc.2+。本版本尚未发布到 npm，请先使用本地源码或安装包验证。
 
-### 从插件市场安装（推荐）
-
-DSH 桌面版默认不内置插件市场，需要先启用实验性的「自定义插件市场」：
-
-1. 侧栏 **插件** → **实验性插件** 旁的 **更多** → 找到 **自定义插件市场** 并打开开关；
-2. 打开 **插件 → 发现** → **添加索引源**，填入：
-
-   ```
-   https://zneoxlab.github.io/dsh-deepseek-webdesk/market/index.json
-   ```
-
-   （GitHub Pages 尚未生效时，可先用 raw 地址：
-   `https://raw.githubusercontent.com/zneoxlab/dsh-deepseek-webdesk/main/docs/market/index.json`）
-3. 搜索「DeepSeek 网页工作台」，确认来源是 npm 包 `dsh-deepseek-webdesk` 后安装。
-
-### 从 npm 安装
-
-npm 包：[`dsh-deepseek-webdesk`](https://www.npmjs.com/package/dsh-deepseek-webdesk)（MIT）
+在源码目录执行：
 
 ```sh
-dsh plugin --profile desktop add dsh-deepseek-webdesk@0.12.2
+npm ci
+npm run release:check
+npm pack
 ```
 
-### 从 GitHub 安装
+使用 Harness 插件管理器安装生成的 `dsh-web-chat-0.1.0.tgz`，或在命令行执行（替换实际路径）：
 
 ```sh
-dsh plugin --profile desktop add git+https://github.com/zneoxlab/dsh-deepseek-webdesk.git
+dsh plugin --profile desktop add /absolute/path/dsh-web-chat-0.1.0.tgz
 ```
 
-### 本地开发（link）
+正式发布后才可使用 `dsh plugin --profile desktop add dsh-web-chat`。不要同时启用旧插件 `dsh-deepseek-webdesk`，避免重复侧栏和快捷键。
 
-```sh
-"/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh" \
-  plugin --profile desktop add \
-  "link:/path/to/dsh-deepseek-webdesk"
-```
+## 旧版迁移与数据
 
-安装完成后重启 DSH（或等插件热加载），左侧栏会出现「会话」。
+首次启用会将旧目录 `~/.dsh/deepseek-webdesk` 中有效的登录快照和快捷键设置复制到 `~/.dsh/dsh-web-chat`；新目录已有文件时不覆盖。旧数据保留，用量缓存与快捷键辅助程序重新生成。设置 `DSH_HOME` 时以上路径均相对于该目录。
 
-## 依赖与联动
+本地分组等界面偏好从旧键 `dsh-deepseek-webdesk.ui.v1` 复制到 `dsh-web-chat.ui.v1`，仅在新键不存在时迁移。以后两个版本的数据分别保存。
 
-- **必需**：DSH 桌面端的内嵌浏览器能力（`globalThis.dshDesktop.browser`）。
-- **可选**：[`dsh-deepseek-web-login`](https://github.com/cv-superding/dsh-deepseek-web-login) —— 仅作为首次登录态的兜底来源，不是必需依赖。
-- 插件 **Host 半** 优先用自己保存的 `~/.dsh/deepseek-webdesk/session.json`，没有时再读 `~/.dsh/web-login/` 的账号；拿到 token 后调用 DeepSeek 官方接口 `chat_session/fetch_page` 拉会话列表，通过同源路由 `/dsh-deepseek-webdesk/api/sessions` 交给客户端。token 只在本机请求头内使用，不打印、不上报。
+登录快照包含账号凭据，仅保存在本机，权限为 600；请勿提交或分享该文件。对话交接以当时读取的文字为准，图片、附件和生成中的内容可能不完整，请检查预览。
 
-## 开发
+## 开发与发布
 
-```sh
-cd dsh-deepseek-webdesk
-npm test        # node --test，Host 映射 + 用量折叠/余额 + 客户端槽位注册
-```
+`npm test` 执行回归测试；`npm run check` 检查语法；`npm run release:check` 运行检查、测试和打包预览。发布步骤见 [发布说明](docs/RELEASING.md)。npm 包只包含运行文件、语言文件、图标及公开说明，不包含测试、开发计划或历史截图。
 
-文件结构：
+源码仓库：[ksnnkyo/dsh-deepseek-webdesk](https://github.com/ksnnkyo/dsh-deepseek-webdesk)。仓库目录名与包名可以不同。
 
-| 文件 | 作用 |
-| --- | --- |
-| `client.js` | 侧栏会话列表、用量与余额行、主区域网页页、内嵌浏览器租约、共享登录、中文强制、接力 |
-| `index.js` | Host 半：读网页登录账号、拉取/置顶/删除 DeepSeek 会话列表的 API；折叠会话日志出今日/总计 token 用量；经 DSH 账号服务查 DeepSeek 余额 |
-| `cordis.patch.yml` / `package.json` | DSH bundle 与客户端模块清单 |
-| `locale/*.json` | 插件管理器中显示的名称与说明 |
-| `docs/` | 截图（会话标题已打码） |
+## 来源与许可
 
-## 隐私
-
-- 会话列表与对话内容只在本机 DSH 进程与 DeepSeek 网页之间流转；登录快照只存本机 `~/.dsh/deepseek-webdesk/session.json`（chmod 600）。
-- 删除/置顶走 DeepSeek 网页端同款接口，操作的是你自己的账号数据。
-- 仓库里的截图已对个人会话标题打码。
-
-## License
-
-[MIT](./LICENSE)
-
----
-
-<details>
-<summary>English</summary>
-
-**dsh-deepseek-webdesk** is a DeepSeek Harness (DSH) desktop plugin that lists your `chat.deepseek.com` conversations in the DSH sidebar and opens the full web chat in the main area. It reuses DSH's embedded-browser lease and the web session captured by `dsh-deepseek-web-login`, forces the Chinese locale, and hands conversations off to the current Harness task or a brand-new one.
-
-</details>
+基于 [zneoxlab/dsh-deepseek-webdesk](https://github.com/zneoxlab/dsh-deepseek-webdesk) 开发，由 ksnnkyo 独立维护，非 DeepSeek 官方插件。保留原作者 MIT 许可与版权声明，详见 [LICENSE](LICENSE) 和 [NOTICE.md](NOTICE.md)。

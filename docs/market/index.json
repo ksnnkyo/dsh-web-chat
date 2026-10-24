@@ -1,42 +1,12 @@
 {
   "format": 1,
   "title": {
-    "zh": "zneoxlab 插件",
-    "en": "zneoxlab plugins"
+    "zh": "dsh-web-chat 插件",
+    "en": "dsh-web-chat plugins"
   },
   "description": {
-    "zh": "zneoxlab 发布的 DSH 桌面端插件索引。",
-    "en": "DSH desktop plugins published by zneoxlab."
+    "zh": "尚未发布；正式发布后生成安装条目。",
+    "en": "No published release entries yet."
   },
-  "plugins": [
-    {
-      "name": "dsh-deepseek-webdesk",
-      "title": {
-        "zh": "DeepSeek 网页工作台",
-        "en": "DeepSeek Web Desk"
-      },
-      "description": {
-        "zh": "在 DSH 左侧栏列出 DeepSeek 网页版会话，点开即用完整网页对话（复用网页登录态、中文界面），支持接力到当前或新任务，并在头像上方显示今日/总计 token 用量与 DeepSeek 余额。",
-        "en": "Lists your DeepSeek web conversations in the DSH sidebar, opens the full web chat in the main area, hands conversations off to the current or a new Harness task, and shows token usage and DeepSeek balance above the account avatar."
-      },
-      "icon": "icon.svg",
-      "author": "zneoxlab",
-      "homepage": "https://github.com/zneoxlab/dsh-deepseek-webdesk#readme",
-      "repository": {
-        "url": "https://github.com/zneoxlab/dsh-deepseek-webdesk"
-      },
-      "versions": [
-        {
-          "version": "0.12.2",
-          "publishTimestamp": 1792514753,
-          "source": {
-            "type": "npm"
-          },
-          "engines": {
-            "dsh": ">=0.2.1-rc.2"
-          }
-        }
-      ]
-    }
-  ]
+  "plugins": []
 }
