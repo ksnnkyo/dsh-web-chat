@@ -30,7 +30,7 @@ npm pack
 dsh plugin --profile desktop add /absolute/path/dsh-web-chat-0.1.0.tgz
 ```
 
-正式发布后才可使用 `dsh plugin --profile desktop add dsh-web-chat`。不要同时启用旧插件 `dsh-deepseek-webdesk`，避免重复侧栏和快捷键。
+正式发布后才可使用 `dsh plugin --profile desktop add dsh-web-chat`。不要同时启用 `dsh-deepseek-webdesk`，避免重复侧栏和快捷键。
 
 ## 旧版迁移与数据
 
@@ -44,8 +44,6 @@ dsh plugin --profile desktop add /absolute/path/dsh-web-chat-0.1.0.tgz
 
 `npm test` 执行回归测试；`npm run check` 检查语法；`npm run release:check` 运行检查、测试和打包预览。发布步骤见 [发布说明](docs/RELEASING.md)。npm 包只包含运行文件、语言文件、图标及公开说明，不包含测试、开发计划或历史截图。
 
-源码仓库：[ksnnkyo/dsh-web-chat](https://github.com/ksnnkyo/dsh-web-chat)。仓库目录名与包名可以不同。
-
 ## 来源与许可
 
-基于 [zneoxlab/dsh-deepseek-webdesk](https://github.com/zneoxlab/dsh-deepseek-webdesk) 开发，由 ksnnkyo 独立维护，非 DeepSeek 官方插件。保留原作者 MIT 许可与版权声明，详见 [LICENSE](LICENSE) 和 [NOTICE.md](NOTICE.md)。
+基于 [zneoxlab/dsh-deepseek-webdesk](https://github.com/zneoxlab/dsh-deepseek-webdesk) 开发，非 DeepSeek 官方插件。保留原作者 MIT 许可与版权声明，详见 [LICENSE](LICENSE) 和 [NOTICE.md](NOTICE.md)。
