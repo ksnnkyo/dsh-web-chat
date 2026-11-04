@@ -2356,6 +2356,15 @@ window.__ModuleLoader__.load({
       );
     }
 
+    function NewConversationGlyph({ size = 16 }) {
+      return h(
+        'svg',
+        { width: size, height: size, viewBox: '0 0 16 16', fill: 'none', 'aria-hidden': true, focusable: false, stroke: 'currentColor', strokeWidth: 1.2, strokeLinecap: 'round', strokeLinejoin: 'round' },
+        h('path', { d: 'M3 2.5h8.5A1.5 1.5 0 0 1 13 4v5.5A1.5 1.5 0 0 1 11.5 11H7l-3.5 2.5V11A1.5 1.5 0 0 1 2 9.5V4A1.5 1.5 0 0 1 3.5 2.5' }),
+        h('path', { d: 'M10.5 5v3M9 6.5h3' }),
+      );
+    }
+
     function TriangleGlyph({ size = 14, open = false }) {
       return h(
         'svg',
@@ -2845,6 +2854,21 @@ window.__ModuleLoader__.load({
               {
                 type: 'button',
                 className: 'dsh-web-chat-section-btn',
+                title: '新建对话',
+                'aria-label': '新建对话',
+                onClick: (event) => {
+                  event.stopPropagation();
+                  openNewConversation();
+                },
+                onKeyDown: (event) => event.stopPropagation(),
+              },
+              h(NewConversationGlyph, { size: 16 }),
+            ),
+            h(
+              'button',
+              {
+                type: 'button',
+                className: 'dsh-web-chat-section-btn',
                 title: prefs.collapsed ? '展开会话区' : '收起会话区',
                 'aria-label': prefs.collapsed ? '展开会话区' : '收起会话区',
                 onClick: (event) => {
@@ -2865,7 +2889,11 @@ window.__ModuleLoader__.load({
                 className: 'dsh-web-chat-section-btn',
                 title: '新建分组',
                 'aria-label': '新建分组',
-                onClick: () => setGroupForm({ id: null, name: '' }),
+                onClick: (event) => {
+                  event.stopPropagation();
+                  setGroupForm({ id: null, name: '' });
+                },
+                onKeyDown: (event) => event.stopPropagation(),
               },
               h(PlusGlyph, { size: 16 }),
             ),
@@ -3391,7 +3419,7 @@ window.__ModuleLoader__.load({
       '.dsh-web-chat-section-label{flex:none;max-width:45%;min-width:0;overflow:hidden;white-space:nowrap;font-size:14px;line-height:20px;color:inherit;opacity:1;visibility:visible;transition:max-width 180ms var(--ds-ease-in-out,ease),opacity 120ms var(--ds-ease-in-out,ease),visibility 0s linear}',
       '.dsh-web-chat-section-label.hidden{max-width:0;opacity:0;visibility:hidden;transition-delay:0s,0s,180ms}',
       '.dsh-web-chat-section-dots{flex:none;margin-left:6px;letter-spacing:2px;color:var(--dsw-alias-label-caption,#8b93a3);font-size:12px;line-height:20px}',
-      '.dsh-web-chat-section-actions{flex:none;display:flex;align-items:center;gap:4px;max-width:60px;opacity:1;overflow:hidden;visibility:visible;transition:max-width 180ms var(--ds-ease-in-out,ease),opacity 120ms var(--ds-ease-in-out,ease),visibility 0s linear}',
+      '.dsh-web-chat-section-actions{flex:none;display:flex;align-items:center;gap:4px;max-width:92px;opacity:1;overflow:hidden;visibility:visible;transition:max-width 180ms var(--ds-ease-in-out,ease),opacity 120ms var(--ds-ease-in-out,ease),visibility 0s linear}',
       '.dsh-web-chat-section-actions.hidden{max-width:0;opacity:0;visibility:hidden;pointer-events:none;transition-delay:0s,0s,180ms}',
       '.dsh-web-chat-search-slot{flex:1;max-width:28px;min-width:0;display:flex;align-items:center;margin-left:auto;padding-left:0;box-sizing:border-box;transition:max-width 180ms var(--ds-ease-in-out,ease),padding-left 180ms var(--ds-ease-in-out,ease)}',
       '.dsh-web-chat-search-slot.expanded{max-width:100%}',
