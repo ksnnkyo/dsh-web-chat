@@ -1,6 +1,6 @@
 {
   "name": "dsh-web-chat",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": false,
   "type": "module",
   "description": "dsh-web-chat：在 DeepSeek Harness 中管理 DeepSeek 网页会话、分组，并将对话整理为可预览的任务草稿。",

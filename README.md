@@ -2,7 +2,7 @@
 
 DeepSeek Harness 桌面端插件：在侧栏管理 DeepSeek 网页会话，在主区域阅读和继续对话，并把选定内容交给 Harness 任务。
 
-包名与界面名称均为 **dsh-web-chat**，独立版本从 **0.1.0** 开始。目前为本地待发布版本。
+包名与界面名称均为 **dsh-web-chat**，当前 GitHub 版本为 **0.1.1**，独立版本从 **0.1.0** 开始。本版本尚未发布到 npm。
 
 ## 功能
 
@@ -24,10 +24,10 @@ npm run release:check
 npm pack
 ```
 
-使用 Harness 插件管理器安装生成的 `dsh-web-chat-0.1.0.tgz`，或在命令行执行（替换实际路径）：
+使用 Harness 插件管理器安装生成的 `dsh-web-chat-0.1.1.tgz`，或在命令行执行（替换实际路径）：
 
 ```sh
-dsh plugin --profile desktop add /absolute/path/dsh-web-chat-0.1.0.tgz
+dsh plugin --profile desktop add /absolute/path/dsh-web-chat-0.1.1.tgz
 ```
 
 正式发布后才可使用 `dsh plugin --profile desktop add dsh-web-chat`。不要同时启用 `dsh-deepseek-webdesk`，避免重复侧栏和快捷键。
