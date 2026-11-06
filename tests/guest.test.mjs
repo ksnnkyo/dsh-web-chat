@@ -47,6 +47,44 @@ test('native sidebar with a single conversation is hidden', async () => {
   await context.window.happyDOM.abort();
 });
 
+test('native sidebar without any conversation links (new user / empty state) is hidden via fallback landmark', async () => {
+  const context = fixture();
+  const sidebar = context.document.createElement('aside');
+  sidebar.innerHTML = '<button id="new-chat">开启新对话</button>';
+  context.document.getElementById('root').prepend(sidebar);
+  rect(sidebar, 0, 0, 260, 900);
+  rect(context.document.getElementById('new-chat'), 16, 16, 120, 36);
+  guestFunction('hideWebSidebarInGuest', context)();
+  assert.equal(sidebar.hasAttribute('data-dsh-web-chat-websidebar'), true);
+  await context.window.happyDOM.abort();
+});
+
+test('mark early exits when sidebar and header are already marked without reflowing elements', async () => {
+  const context = fixture();
+  const sidebar = context.document.createElement('aside');
+  sidebar.innerHTML = '<a href="/a/chat/s/abcdef">唯一会话</a>';
+  context.document.getElementById('root').prepend(sidebar);
+  rect(sidebar, 0, 0, 260, 900);
+
+  let rectCalls = 0;
+  const link = sidebar.querySelector('a');
+  link.getBoundingClientRect = () => {
+    rectCalls++;
+    return { x: 0, y: 0, left: 0, top: 0, right: 200, bottom: 40, width: 200, height: 40 };
+  };
+
+  const fn = guestFunction('hideWebSidebarInGuest', context);
+  fn();
+  assert.equal(sidebar.hasAttribute('data-dsh-web-chat-websidebar'), true);
+  assert.equal(context.document.getElementById('header').hasAttribute('data-dsh-web-chat-webheader'), true);
+
+  const callsAfterFirst = rectCalls;
+  // Second run: both are already marked and connected, early-exit should avoid touching link rects
+  fn();
+  assert.equal(rectCalls, callsAfterFirst);
+  await context.window.happyDOM.abort();
+});
+
 test('navigation mounted after injection is hidden by the observer', async () => {
   const context = fixture();
   const header = context.document.getElementById('header');

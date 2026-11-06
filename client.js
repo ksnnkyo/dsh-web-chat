@@ -610,43 +610,103 @@ window.__ModuleLoader__.load({
         (document.head || document.documentElement).appendChild(style);
       }
       style.textContent =
-        '[data-dsh-web-chat-websidebar]{position:fixed !important;visibility:hidden !important;pointer-events:none !important}' +
+        '[data-dsh-web-chat-websidebar]{position:fixed !important;left:-9999px !important;top:0 !important;width:0 !important;max-width:0 !important;height:0 !important;max-height:0 !important;overflow:hidden !important;visibility:hidden !important;pointer-events:none !important}' +
         '[data-dsh-web-chat-webheader]{display:none !important}';
+
+      const isConnected = (node) => {
+        if (node === null || node === undefined) return false;
+        if (typeof node.isConnected === 'boolean') return node.isConnected;
+        return document.documentElement !== null && document.documentElement !== undefined && typeof document.documentElement.contains === 'function' ? document.documentElement.contains(node) : true;
+      };
+
       const hasContent = (node) => node.querySelector('textarea,[contenteditable="true"],.ds-markdown') !== null;
+
       const mark = () => {
-        // One conversation is enough. Never treat a content/composer ancestor as navigation.
-        const links = document.querySelectorAll('a[href^="/a/chat/s/"]');
-        for (const link of links) {
-          let node = link.parentElement;
-          let sidebar = null;
-          while (node !== null && node !== document.body) {
-            const rect = node.getBoundingClientRect();
-            if (rect.width >= 168 && rect.width <= 360 && rect.height >= 300 && !hasContent(node)) sidebar = node;
-            node = node.parentElement;
+        const currentSidebar = document.querySelector('[data-dsh-web-chat-websidebar]');
+        const currentHeader = document.querySelector('[data-dsh-web-chat-webheader]');
+        const needSidebar = !isConnected(currentSidebar);
+        const needHeader = !isConnected(currentHeader);
+        if (!needSidebar && !needHeader) return;
+
+        if (needSidebar) {
+          let foundSidebar = null;
+          // 1. One conversation link is enough. Outermost ancestor is the sidebar.
+          const links = document.querySelectorAll('a[href^="/a/chat/s/"]');
+          for (const link of links) {
+            let node = link.parentElement;
+            let candidate = null;
+            while (node !== null && node !== document.body) {
+              const rect = node.getBoundingClientRect();
+              if (rect.width >= 168 && rect.width <= 360 && rect.height >= 300 && !hasContent(node)) candidate = node;
+              node = node.parentElement;
+            }
+            if (candidate !== null) {
+              foundSidebar = candidate;
+              break;
+            }
           }
-          if (sidebar !== null && !sidebar.hasAttribute('data-dsh-web-chat-websidebar')) sidebar.setAttribute('data-dsh-web-chat-websidebar', '1');
-        }
-        // The site renders title headers separately from the portal-mounted navigation.
-        for (const header of document.querySelectorAll('.the-header')) {
-          if (!hasContent(header) && !header.hasAttribute('data-dsh-web-chat-webheader')) header.setAttribute('data-dsh-web-chat-webheader', '1');
-        }
-        // The collapsed header has unlabelled icon buttons. Find its shallow top row,
-        // including logo and duplicate title, while excluding message action toolbars.
-        for (const button of document.querySelectorAll('button,[role="button"]')) {
-          const rect = button.getBoundingClientRect();
-          if (rect.width === 0 || rect.top < 0 || rect.top > 96 || rect.left > 240) continue;
-          if (button.closest('[data-dsh-web-chat-websidebar],.ds-markdown') !== null) continue;
-          let node = button.parentElement;
-          let header = null;
-          while (node !== null && node !== document.body) {
-            const box = node.getBoundingClientRect();
-            if (box.height > 100) break;
-            if (box.height > 0 && box.width >= 100 && box.top >= 0 && box.top <= 96 &&
-                !hasContent(node) && node.querySelectorAll('button,[role="button"]').length >= 3 &&
-                node.querySelector('svg,img') !== null) header = node;
-            node = node.parentElement;
+          // 2. Fallback: semantic aside or navigation landmark (e.g. for new users with no history yet)
+          if (foundSidebar === null) {
+            for (const aside of document.querySelectorAll('aside, [role="navigation"]')) {
+              if (hasContent(aside)) continue;
+              const rect = aside.getBoundingClientRect();
+              if (rect.width >= 168 && rect.width <= 360 && rect.height >= 300 && rect.left <= 48) {
+                foundSidebar = aside;
+                break;
+              }
+            }
           }
-          if (header !== null && !header.hasAttribute('data-dsh-web-chat-webheader')) header.setAttribute('data-dsh-web-chat-webheader', '1');
+          // 3. Fallback: left column anchoring top-left buttons (such as "New Chat" button)
+          if (foundSidebar === null) {
+            for (const button of document.querySelectorAll('button, [role="button"], a[href="/"]')) {
+              const rect = button.getBoundingClientRect();
+              if (rect.width === 0 || rect.left < 0 || rect.left > 80 || rect.top < 0 || rect.top > 200) continue;
+              if (button.closest('.ds-markdown') !== null) continue;
+              let node = button.parentElement;
+              let candidate = null;
+              while (node !== null && node !== document.body) {
+                const box = node.getBoundingClientRect();
+                if (box.left <= 32 && box.width >= 168 && box.width <= 360 && box.height >= 300 && !hasContent(node)) {
+                  candidate = node;
+                }
+                node = node.parentElement;
+              }
+              if (candidate !== null) {
+                foundSidebar = candidate;
+                break;
+              }
+            }
+          }
+          if (foundSidebar !== null && !foundSidebar.hasAttribute('data-dsh-web-chat-websidebar')) {
+            foundSidebar.setAttribute('data-dsh-web-chat-websidebar', '1');
+          }
+        }
+
+        if (needHeader) {
+          // The site renders title headers separately from the portal-mounted navigation.
+          for (const header of document.querySelectorAll('.the-header, header, [role="banner"]')) {
+            if (!hasContent(header) && !header.hasAttribute('data-dsh-web-chat-webheader')) {
+              header.setAttribute('data-dsh-web-chat-webheader', '1');
+            }
+          }
+          // The collapsed header has unlabelled icon buttons. Find its shallow top row,
+          // including logo and duplicate title, while excluding message action toolbars.
+          for (const button of document.querySelectorAll('button,[role="button"]')) {
+            const rect = button.getBoundingClientRect();
+            if (rect.width === 0 || rect.top < 0 || rect.top > 96 || rect.left > 240) continue;
+            if (button.closest('[data-dsh-web-chat-websidebar],.ds-markdown') !== null) continue;
+            let node = button.parentElement;
+            let header = null;
+            while (node !== null && node !== document.body) {
+              const box = node.getBoundingClientRect();
+              if (box.height > 100) break;
+              if (box.height > 0 && box.width >= 100 && box.top >= 0 && box.top <= 96 &&
+                  !hasContent(node) && node.querySelectorAll('button,[role="button"]').length >= 3 &&
+                  node.querySelector('svg,img') !== null) header = node;
+              node = node.parentElement;
+            }
+            if (header !== null && !header.hasAttribute('data-dsh-web-chat-webheader')) header.setAttribute('data-dsh-web-chat-webheader', '1');
+          }
         }
       };
       mark();
@@ -668,20 +728,23 @@ window.__ModuleLoader__.load({
     async function injectHideWebSidebar(view) {
       if (view === null || typeof view.executeJavaScript !== 'function') return;
       try {
+        if (typeof view.insertCSS === 'function') {
+          try {
+            await view.insertCSS(
+              '[data-dsh-web-chat-websidebar]{position:fixed !important;left:-9999px !important;top:0 !important;width:0 !important;max-width:0 !important;height:0 !important;max-height:0 !important;overflow:hidden !important;visibility:hidden !important;pointer-events:none !important}' +
+              '[data-dsh-web-chat-webheader]{display:none !important}'
+            );
+          } catch (error) {
+            /* insertCSS is best effort */
+          }
+        }
         await view.executeJavaScript('(' + hideWebSidebarInGuest.toString() + ')()', false);
       } catch (error) {
         /* hiding the web sidebar is best effort */
       }
     }
 
-    async function injectEarlyHideWebSidebar(view) {
-      if (view === null || typeof view.executeJavaScript !== 'function') return;
-      try {
-        await view.executeJavaScript('(' + hideWebSidebarInGuest.toString() + ')()', false);
-      } catch (error) {
-        /* early injection is best effort */
-      }
-    }
+    const injectEarlyHideWebSidebar = injectHideWebSidebar;
 
     function probeAuthInGuest() {
       const composer = document.querySelector('textarea, [contenteditable="true"]');

@@ -28,6 +28,6 @@ test('market entries use the confirmed registry version, author and publication 
   const index = createMarketIndex(pkg, registry);
   assert.equal(index.plugins[0].name, pkg.name);
   assert.equal(index.plugins[0].author, 'ksnnkyo');
-  assert.equal(index.plugins[0].versions[0].version, '0.1.0');
+  assert.equal(index.plugins[0].versions[0].version, pkg.version);
   assert.equal(index.plugins[0].versions[0].publishTimestamp, 1792814400);
 });
