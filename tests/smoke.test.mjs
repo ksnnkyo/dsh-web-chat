@@ -113,8 +113,35 @@ test('client bundle registers sidebar entry, header menu and persistent overlay 
   assert.match(source, /__appKit_@deepseek\/chat_localePreference/);
   assert.match(source, /deepseek-web-login\/api\/browser\/session/);
   assert.match(source, /conversation\.input\.shell\(/);
+  assert.match(source, /function SidebarTabSwitcher\b/);
+  assert.match(source, /function TerminalGlyph\b/);
+  assert.match(source, /function PersonLaptopGlyph\b/);
+  assert.match(source, /data-dsh-sidebar-tab/);
+  assert.match(source, /\.dsh-web-chat-switcher\b/);
 
   for (const entry of effects) {
     if (typeof entry.dispose === 'function') assert.doesNotThrow(() => entry.dispose());
   }
+});
+
+test('sidebarTab preference defaults to session and supports workspace toggle', () => {
+  const match = source.match(/function loadUiPrefs\(\) \{[\s\S]*?\n    \}/);
+  assert.ok(match);
+  const context = vm.createContext({
+    readLocalJson: (key, fallback) => context.__mockValue || fallback,
+    SESSION_LIMIT_DEFAULT: 50,
+    SESSION_LIMIT_MAX: 200,
+    GROUP_NAME_LIMIT: 24,
+    UNGROUPED_KEY: '__ungrouped__',
+    UI_PREFS_KEY: 'dsh-web-chat.ui.v1',
+  });
+  vm.runInContext(match[0], context);
+
+  context.__mockValue = {};
+  const defaultPrefs = context.loadUiPrefs();
+  assert.equal(defaultPrefs.sidebarTab, 'session');
+
+  context.__mockValue = { sidebarTab: 'workspace' };
+  const workspacePrefs = context.loadUiPrefs();
+  assert.equal(workspacePrefs.sidebarTab, 'workspace');
 });

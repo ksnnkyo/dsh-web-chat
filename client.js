@@ -161,7 +161,8 @@ window.__ModuleLoader__.load({
         }
       }
       return {
-        collapsed: raw.collapsed === true,
+        sidebarTab: raw.sidebarTab === 'workspace' ? 'workspace' : 'session',
+        collapsed: false,
         limit: Number.isFinite(limit) ? Math.max(SESSION_LIMIT_DEFAULT, Math.min(SESSION_LIMIT_MAX, Math.floor(limit))) : SESSION_LIMIT_DEFAULT,
         pins: Array.isArray(raw.pins) ? raw.pins.filter((id) => typeof id === 'string' && id !== '').slice(0, 200) : [],
         // 头像上方的「今日/总计 token 用量 + 余额」行，默认开，可在「设置 → 通用」里关掉。
@@ -173,8 +174,37 @@ window.__ModuleLoader__.load({
       };
     }
 
+    function setSidebarTabAttr(tab) {
+      try {
+        if (typeof document !== 'undefined' && document.documentElement !== null && document.documentElement !== undefined) {
+          if (document.documentElement.dataset !== undefined) {
+            document.documentElement.dataset.dshSidebarTab = tab;
+          } else if (typeof document.documentElement.setAttribute === 'function') {
+            document.documentElement.setAttribute('data-dsh-sidebar-tab', tab);
+          }
+        }
+      } catch (error) {
+        /* ignore in mock environments */
+      }
+    }
+
+    function removeSidebarTabAttr() {
+      try {
+        if (typeof document !== 'undefined' && document.documentElement !== null && document.documentElement !== undefined) {
+          if (document.documentElement.dataset !== undefined) {
+            delete document.documentElement.dataset.dshSidebarTab;
+          } else if (typeof document.documentElement.removeAttribute === 'function') {
+            document.documentElement.removeAttribute('data-dsh-sidebar-tab');
+          }
+        }
+      } catch (error) {
+        /* ignore in mock environments */
+      }
+    }
+
     migrateLegacyUiPrefs();
     let uiPrefs = loadUiPrefs();
+    setSidebarTabAttr(uiPrefs.sidebarTab === 'workspace' ? 'workspace' : 'session');
     const uiPrefsListeners = new Set();
     function emitUiPrefs() {
       for (const fn of [...uiPrefsListeners]) {
@@ -194,6 +224,9 @@ window.__ModuleLoader__.load({
     }
     function updateUiPrefs(patch) {
       uiPrefs = Object.assign({}, uiPrefs, patch);
+      if (typeof patch.sidebarTab === 'string') {
+        setSidebarTabAttr(patch.sidebarTab === 'workspace' ? 'workspace' : 'session');
+      }
       writeLocalJson(UI_PREFS_KEY, uiPrefs);
       emitUiPrefs();
     }
@@ -1650,6 +1683,7 @@ window.__ModuleLoader__.load({
     }
 
     function openPage(id) {
+      updateUiPrefs({ sidebarTab: 'session' });
       enterWebPanel();
       pendingConversationId = typeof id === 'string' ? id : '';
       setPageOpen(true);
@@ -2451,6 +2485,74 @@ window.__ModuleLoader__.load({
       );
     }
 
+    function TerminalGlyph({ size = 15 }) {
+      return h(
+        'svg',
+        { width: size, height: size, viewBox: '0 0 16 16', fill: 'none', 'aria-hidden': true, focusable: false },
+        h('rect', { x: '1.5', y: '2', width: '13', height: '12', rx: '2.5', stroke: 'currentColor', strokeWidth: '1.3' }),
+        h('path', { d: 'M4.75 5.75L7.25 8l-2.5 2.25', stroke: 'currentColor', strokeWidth: '1.3', strokeLinecap: 'round', strokeLinejoin: 'round' }),
+        h('path', { d: 'M8.75 10.75h2.75', stroke: 'currentColor', strokeWidth: '1.3', strokeLinecap: 'round' }),
+      );
+    }
+
+    function PersonLaptopGlyph({ size = 15 }) {
+      return h(
+        'svg',
+        { width: size, height: size, viewBox: '0 0 16 16', fill: 'none', 'aria-hidden': true, focusable: false },
+        h('circle', { cx: '8', cy: '3.75', r: '1.6', stroke: 'currentColor', strokeWidth: '1.2' }),
+        h('path', {
+          d: 'M6.75 4C5.5 4 4.5 5.2 4.5 6.5c0 1.5 1.2 2.5 2.5 2.8M9.25 4c1.25 0 2.25 1.2 2.25 2.5 0 1.5-1.2 2.5-2.5 2.8',
+          stroke: 'currentColor',
+          strokeWidth: '1.2',
+          strokeLinecap: 'round',
+        }),
+        h('path', { d: 'M7 9.2v2.3M9 9.2v2.3', stroke: 'currentColor', strokeWidth: '1.2', strokeLinecap: 'round' }),
+        h('path', { d: 'M6.2 11.2l-1.2 2.3', stroke: 'currentColor', strokeWidth: '1.25', strokeLinecap: 'round' }),
+        h('path', { d: 'M5 13.5h6', stroke: 'currentColor', strokeWidth: '1.25', strokeLinecap: 'round' }),
+      );
+    }
+
+    function SidebarTabSwitcher({ activeTab, onSelectTab }) {
+      const isWorkspace = activeTab === 'workspace';
+      const isSession = !isWorkspace;
+      return h(
+        'div',
+        { className: 'dsh-web-chat-switcher-bar' },
+        h(
+          'div',
+          { className: 'dsh-web-chat-switcher', role: 'tablist', 'aria-label': '侧边栏展示区切换' },
+          h(
+            'button',
+            {
+              type: 'button',
+              role: 'tab',
+              className: 'dsh-web-chat-switcher-item tab-workspace' + (isWorkspace ? ' active' : ''),
+              'aria-selected': isWorkspace ? 'true' : 'false',
+              title: '工作区',
+              'aria-label': '工作区',
+              onClick: () => onSelectTab('workspace'),
+            },
+            h(TerminalGlyph, { size: 15 }),
+            h('span', { className: 'dsh-web-chat-switcher-label' }, '工作区'),
+          ),
+          h(
+            'button',
+            {
+              type: 'button',
+              role: 'tab',
+              className: 'dsh-web-chat-switcher-item tab-session' + (isSession ? ' active' : ''),
+              'aria-selected': isSession ? 'true' : 'false',
+              title: '会话区',
+              'aria-label': '会话区',
+              onClick: () => onSelectTab('session'),
+            },
+            h(PersonLaptopGlyph, { size: 15 }),
+            h('span', { className: 'dsh-web-chat-switcher-label' }, '会话区'),
+          ),
+        ),
+      );
+    }
+
     function SidebarSessionEntry({ wide = true }) {
       const list = useSessionList();
       const prefs = useUiPrefs();
@@ -2754,152 +2856,124 @@ window.__ModuleLoader__.load({
         else renameGroup(groupForm.id, groupForm.name);
         setGroupForm(null);
       };
-      // 会话区主体（order 2，占列表可用高度 40%）与用量余额行（order 4，钉在工作区底部、设置行上方）拆成兄弟节点排序。
+      // 顶部模式切换开关（图二图三风格，order 2）、会话区主体（order 3）与用量余额行（order 4）拆成兄弟节点排序。
       return h(
         React.Fragment,
         null,
+        h(SidebarTabSwitcher, {
+          activeTab: prefs.sidebarTab,
+          onSelectTab: (tab) => updateUiPrefs({ sidebarTab: tab }),
+        }),
         h(
           'div',
-          { className: 'dsh-web-chat-foot' + (prefs.collapsed ? ' is-collapsed' : '') },
-        // 区头对齐原生工作区 sectionHeader：文字标签 + 内联搜索 + 圆形图标按钮；搜索展开时标签与按钮让位。
-        h(
-          'div',
-          {
-            className: 'dsh-web-chat-section-head',
-            role: 'button',
-            tabIndex: 0,
-            title: prefs.collapsed ? '展开会话区' : '收起会话区',
-            'aria-label': prefs.collapsed ? '展开会话区' : '收起会话区',
-            'aria-expanded': prefs.collapsed ? 'false' : 'true',
-            onClick: () => updateUiPrefs({ collapsed: prefs.collapsed !== true }),
-            onKeyDown: (event) => {
-              if (event.key === 'Enter' || event.key === ' ') {
-                event.preventDefault();
-                updateUiPrefs({ collapsed: prefs.collapsed !== true });
-              }
+          { className: 'dsh-web-chat-foot' + (prefs.sidebarTab === 'workspace' ? ' is-hidden-tab' : '') },
+          // 区头对齐原生工作区 sectionHeader：文字标签 + 内联搜索 + 圆形图标按钮；搜索展开时标签与按钮让位。
+          h(
+            'div',
+            {
+              className: 'dsh-web-chat-section-head',
             },
-          },
-          h(
-            'span',
-            { className: 'dsh-web-chat-section-label' + (searchExpanded ? ' hidden' : '') },
-            '会话区',
-            // 整区收起时，有分组则用「···」提示里面还有分组。
-            prefs.collapsed && prefs.groups.length > 0 ? h('span', { key: 'dots', className: 'dsh-web-chat-section-dots' }, '···') : null,
-          ),
-          h(
-            'span',
-            { className: 'dsh-web-chat-search-slot' + (searchExpanded ? ' expanded' : '') },
+            h(
+              'span',
+              { className: 'dsh-web-chat-section-label' + (searchExpanded ? ' hidden' : '') },
+              '会话区',
+            ),
+            h(
+              'span',
+              { className: 'dsh-web-chat-search-slot' + (searchExpanded ? ' expanded' : '') },
+              h(
+                'div',
+                {
+                  className: 'dsh-web-chat-search' + (searchExpanded ? ' expanded' : ''),
+                  onClick: (event) => {
+                    event.stopPropagation();
+                    if (!searchExpanded) setSearchExpanded(true);
+                  },
+                },
+                h(
+                  'button',
+                  {
+                    type: 'button',
+                    className: 'dsh-web-chat-search-btn',
+                    title: '搜索会话',
+                    'aria-label': '搜索会话',
+                    'aria-expanded': searchExpanded ? 'true' : 'false',
+                    onClick: (event) => {
+                      event.stopPropagation();
+                      setSearchExpanded(true);
+                    },
+                  },
+                  h(SearchGlyph, { size: searchExpanded ? 11 : 14 }),
+                ),
+                h('input', {
+                  ref: searchInputRef,
+                  className: 'dsh-web-chat-search-input',
+                  type: 'text',
+                  placeholder: '搜索会话',
+                  value: search,
+                  tabIndex: searchExpanded ? 0 : -1,
+                  onChange: (event) => setSearch(event.target.value),
+                  onKeyDown: (event) => {
+                    if (event.key !== 'Escape') return;
+                    setSearch('');
+                    setSearchExpanded(false);
+                  },
+                }),
+                searchExpanded
+                  ? h(
+                      'button',
+                      {
+                        type: 'button',
+                        className: 'dsh-web-chat-search-clear',
+                        title: '清空搜索',
+                        'aria-label': '清空搜索',
+                        onClick: (event) => {
+                          event.stopPropagation();
+                          setSearch('');
+                          setSearchExpanded(false);
+                        },
+                      },
+                      h(CloseGlyph, { size: 12 }),
+                    )
+                  : null,
+              ),
+            ),
             h(
               'div',
-              {
-                className: 'dsh-web-chat-search' + (searchExpanded ? ' expanded' : ''),
-                onClick: (event) => {
-                  event.stopPropagation();
-                  if (!searchExpanded) setSearchExpanded(true);
-                },
-              },
+              { className: 'dsh-web-chat-section-actions' + (searchExpanded ? ' hidden' : '') },
               h(
                 'button',
                 {
                   type: 'button',
-                  className: 'dsh-web-chat-search-btn',
-                  title: '搜索会话',
-                  'aria-label': '搜索会话',
-                  'aria-expanded': searchExpanded ? 'true' : 'false',
+                  className: 'dsh-web-chat-section-btn',
+                  title: '新建对话',
+                  'aria-label': '新建对话',
                   onClick: (event) => {
                     event.stopPropagation();
-                    setSearchExpanded(true);
+                    openNewConversation();
                   },
+                  onKeyDown: (event) => event.stopPropagation(),
                 },
-                h(SearchGlyph, { size: searchExpanded ? 11 : 14 }),
+                h(NewConversationGlyph, { size: 16 }),
               ),
-              h('input', {
-                ref: searchInputRef,
-                className: 'dsh-web-chat-search-input',
-                type: 'text',
-                placeholder: '搜索会话',
-                value: search,
-                tabIndex: searchExpanded ? 0 : -1,
-                onChange: (event) => setSearch(event.target.value),
-                onKeyDown: (event) => {
-                  if (event.key !== 'Escape') return;
-                  setSearch('');
-                  setSearchExpanded(false);
-                },
-              }),
-              searchExpanded
-                ? h(
-                    'button',
-                    {
-                      type: 'button',
-                      className: 'dsh-web-chat-search-clear',
-                      title: '清空搜索',
-                      'aria-label': '清空搜索',
-                      onClick: (event) => {
-                        event.stopPropagation();
-                        setSearch('');
-                        setSearchExpanded(false);
-                      },
-                    },
-                    h(CloseGlyph, { size: 12 }),
-                  )
-                : null,
-            ),
-          ),
-          h(
-            'div',
-            { className: 'dsh-web-chat-section-actions' + (searchExpanded ? ' hidden' : '') },
-            h(
-              'button',
-              {
-                type: 'button',
-                className: 'dsh-web-chat-section-btn',
-                title: '新建对话',
-                'aria-label': '新建对话',
-                onClick: (event) => {
-                  event.stopPropagation();
-                  openNewConversation();
-                },
-                onKeyDown: (event) => event.stopPropagation(),
-              },
-              h(NewConversationGlyph, { size: 16 }),
-            ),
-            h(
-              'button',
-              {
-                type: 'button',
-                className: 'dsh-web-chat-section-btn',
-                title: prefs.collapsed ? '展开会话区' : '收起会话区',
-                'aria-label': prefs.collapsed ? '展开会话区' : '收起会话区',
-                onClick: (event) => {
-                  event.stopPropagation();
-                  updateUiPrefs({ collapsed: prefs.collapsed !== true });
-                },
-              },
               h(
-                'span',
-                { className: 'dsh-web-chat-section-btn-glyph' + (prefs.collapsed ? '' : ' flip') },
-                h(ChevronGlyph, { size: 14, open: true }),
+                'button',
+                {
+                  type: 'button',
+                  className: 'dsh-web-chat-section-btn',
+                  title: '新建分组',
+                  'aria-label': '新建分组',
+                  onClick: (event) => {
+                    event.stopPropagation();
+                    setGroupForm({ id: null, name: '' });
+                  },
+                  onKeyDown: (event) => event.stopPropagation(),
+                },
+                h(PlusGlyph, { size: 16 }),
               ),
             ),
-            h(
-              'button',
-              {
-                type: 'button',
-                className: 'dsh-web-chat-section-btn',
-                title: '新建分组',
-                'aria-label': '新建分组',
-                onClick: (event) => {
-                  event.stopPropagation();
-                  setGroupForm({ id: null, name: '' });
-                },
-                onKeyDown: (event) => event.stopPropagation(),
-              },
-              h(PlusGlyph, { size: 16 }),
-            ),
           ),
-        ),
-        prefs.collapsed ? null : h('div', { className: 'dsh-web-chat-foot-list', ref: listRef, onScroll: handleListScroll }, children),
+          h('div', { className: 'dsh-web-chat-foot-list', ref: listRef, onScroll: handleListScroll }, children),
         pendingDelete === null
           ? null
           : h(
@@ -3404,17 +3478,31 @@ window.__ModuleLoader__.load({
       '.dsh-web-chat-placeholder-text{font-size:12px;max-width:460px;text-align:center;line-height:1.7}',
       '.dsh-web-chat-spinner{width:22px;height:22px;border-radius:50%;border:2px solid var(--dsw-alias-border-l2,#d7dae0);border-top-color:var(--dsw-alias-brand-primary,#4d6bfe);animation:dsh-web-chat-spin .9s linear infinite}',
       '.dsh-web-chat-spinner.bad{border-top-color:var(--dsw-alias-state-error-primary,#dc2626)}',
-      '.dsh-web-chat-foot{display:flex;flex-direction:column;flex:2 1 0px;order:2;min-height:0;width:100%;box-sizing:border-box;padding:0 0 4px;font-size:14px;line-height:20px}',
-      '.dsh-web-chat-foot.is-collapsed{flex:0 0 auto}',
-      // 会话区挪到工作区上面：footArea 与 footerActions 都透明化（display:contents），
-      // 会话区与工作区按 2:3 分配扣除顶部控件、用量和账号后的可用高度，列表各自滚动；
-      // 用量余额行(.dsh-web-chat-usage-bar, order 4) 钉在工作区底部、settingsArea(order 5) 之上。
+      '.dsh-web-chat-switcher-bar{order:2 !important;flex:0 0 auto !important;display:flex;align-items:center;box-sizing:border-box;width:100%;padding:4px 8px 4px 6px}',
+      '.dsh-web-chat-switcher{display:inline-flex;align-items:center;box-sizing:border-box;padding:2px;border-radius:9999px;background:var(--dsw-alias-bg-layer-2,#e9ecef);border:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.06));user-select:none;gap:2px}',
+      '.dsh-web-chat-switcher-item{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;height:26px;padding:0 7px;border:1px solid transparent;border-radius:9999px;background:transparent;color:var(--dsw-alias-label-tertiary,#6b7280);font-family:inherit;font-size:13px;font-weight:500;line-height:1;cursor:pointer;outline:none;transition:all 180ms cubic-bezier(0.4,0,0.2,1);white-space:nowrap}',
+      '.dsh-web-chat-switcher-item:hover:not(.active){color:var(--dsw-alias-label-primary,#1f2329);background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.04))}',
+      '.dsh-web-chat-switcher-item:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4d6bfe));outline-offset:1px}',
+      '.dsh-web-chat-switcher-label{display:inline-block;max-width:0;opacity:0;overflow:hidden;margin-left:0;white-space:nowrap;vertical-align:middle;transition:max-width 180ms cubic-bezier(0.4,0,0.2,1),opacity 150ms ease,margin-left 180ms ease}',
+      '.dsh-web-chat-switcher-item.active{padding:0 10px 0 8px}',
+      '.dsh-web-chat-switcher-item.active .dsh-web-chat-switcher-label{max-width:60px;opacity:1;margin-left:5px}',
+      '.dsh-web-chat-switcher-item.tab-workspace.active{background:rgba(46,125,79,.1);border-color:#5e9575;color:#276749}',
+      '.dsh-web-chat-switcher-item.tab-session.active{background:rgba(196,98,48,.1);border-color:#d9825b;color:#b85828}',
+      '[data-theme="dark"] .dsh-web-chat-switcher{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.1)}',
+      '[data-theme="dark"] .dsh-web-chat-switcher-item{color:var(--dsw-alias-label-tertiary,#8b93a3)}',
+      '[data-theme="dark"] .dsh-web-chat-switcher-item.tab-workspace.active{background:rgba(82,196,128,.16);border-color:#52c480;color:#52c480}',
+      '[data-theme="dark"] .dsh-web-chat-switcher-item.tab-session.active{background:rgba(224,122,74,.16);border-color:#e07a4a;color:#e07a4a}',
+      '.dsh-web-chat-foot{display:flex;flex-direction:column;flex:1 1 0px !important;order:3 !important;min-height:0 !important;width:100%;box-sizing:border-box;padding:0 0 4px;font-size:14px;line-height:20px}',
+      '.dsh-web-chat-foot.is-hidden-tab{display:none !important}',
       '[class*="footArea"]{display:contents !important}',
       '[class*="footerActions"]{display:contents !important}',
-      '[class*="regionArea"]{order:3 !important;flex:3 1 0px !important;min-height:0 !important}',
+      '[data-dsh-plugin="remote-bridge"]{display:none !important}',
+      '[class*="regionArea"]{order:3 !important;flex:1 1 0px !important;min-height:0 !important}',
+      'html:not([data-dsh-sidebar-tab="workspace"]) [class*="regionArea"]{display:none !important}',
+      'html[data-dsh-sidebar-tab="workspace"] .dsh-web-chat-foot{display:none !important}',
       '[class*="settingsArea"]{order:5 !important;flex:0 0 auto !important}',
       '[class*="collapsed"] .dsh-web-chat-foot-icon{align-self:center}',
-      '.dsh-web-chat-section-head{flex:0 0 auto;display:flex;align-items:center;gap:4px;box-sizing:border-box;height:36px;padding-left:4px;margin:2px 0 4px;color:var(--dsw-alias-label-tertiary,#8b93a3);cursor:pointer;user-select:none}',
+      '.dsh-web-chat-section-head{flex:0 0 auto;display:flex;align-items:center;gap:4px;box-sizing:border-box;height:36px;padding-left:4px;margin:2px 0 4px;color:var(--dsw-alias-label-tertiary,#8b93a3);user-select:none}',
       '.dsh-web-chat-section-head:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4d6bfe));outline-offset:-2px;border-radius:12px}',
       '.dsh-web-chat-section-label{flex:none;max-width:45%;min-width:0;overflow:hidden;white-space:nowrap;font-size:14px;line-height:20px;color:inherit;opacity:1;visibility:visible;transition:max-width 180ms var(--ds-ease-in-out,ease),opacity 120ms var(--ds-ease-in-out,ease),visibility 0s linear}',
       '.dsh-web-chat-section-label.hidden{max-width:0;opacity:0;visibility:hidden;transition-delay:0s,0s,180ms}',
@@ -3659,6 +3747,7 @@ window.__ModuleLoader__.load({
       ctx.effect(
         () => () => {
           releaseGuest();
+          removeSidebarTabAttr();
           appCtx = null;
         },
         'dsh-web-chat: cleanup',

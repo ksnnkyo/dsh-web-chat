@@ -27,6 +27,7 @@ out/
 # Editor
 .idea/
 .vscode/
+.zcode/
 *.swp
 *.swo
 *~
@@ -34,3 +35,6 @@ out/
 # Tests / coverage
 coverage/
 .nyc_output/
+
+# Planning & specs
+docs/superpowers/
