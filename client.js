@@ -2,6 +2,13 @@ window.__ModuleLoader__.load({
   id: 'dsh-web-chat',
   factory(require) {
     const React = require('react');
+    let ReactDOM = null;
+    try {
+      ReactDOM = require('react-dom');
+    } catch (error) {
+      ReactDOM = null;
+    }
+    const createPortal = ReactDOM !== null && typeof ReactDOM.createPortal === 'function' ? ReactDOM.createPortal : null;
     const h = React.createElement;
 
     // 嵌入核心沿用 dsh-deepseek-web-chat：DSH 内嵌浏览器租约 + 共享网页登录态。
@@ -2616,7 +2623,54 @@ window.__ModuleLoader__.load({
       );
     }
 
+    function pageZoomScale() {
+      try {
+        const raw = document.body?.getAttribute?.('data-dsh-claude-page-zoom');
+        if (raw === null || raw === undefined || raw === '') return 1;
+        const parsed = Number.parseFloat(raw);
+        return Number.isFinite(parsed) && parsed > 0 ? parsed : 1;
+      } catch (error) {
+        return 1;
+      }
+    }
+
+    function resolveSidebarRoot(anchor) {
+      if (anchor === null || anchor === undefined || typeof anchor.closest !== 'function') return null;
+      const footArea = anchor.closest('[class*="footArea"], [data-dsh-claude-part~="foot-area"]');
+      if (footArea !== null && footArea.parentElement !== null) return footArea.parentElement;
+      return anchor.closest('[data-dsh-claude-part~="sidebar-root"], [data-slot="sidebar"] > div');
+    }
+
+    function resolveSidebarTarget(anchor) {
+      if (anchor === null || anchor === undefined || typeof anchor.closest !== 'function') return null;
+      const root = resolveSidebarRoot(anchor);
+      if (root !== null) {
+        const regionArea = root.querySelector('[class*="regionArea"], [data-dsh-claude-part~="region-area"]');
+        if (regionArea !== null) return regionArea;
+        return root;
+      }
+      if (typeof document !== 'undefined' && typeof document.querySelector === 'function') {
+        return document.querySelector('[class*="regionArea"], [data-dsh-claude-part~="region-area"]');
+      }
+      return null;
+    }
+
     function SidebarSessionEntry({ wide = true }) {
+      const anchorRef = React.useRef(null);
+      const [portalState, setPortalState] = React.useState({ ready: false, target: null });
+      React.useLayoutEffect(() => {
+        const nextTarget = resolveSidebarTarget(anchorRef.current);
+        setPortalState((previous) =>
+          previous.ready && previous.target === nextTarget ? previous : { ready: true, target: nextTarget },
+        );
+      });
+      const renderInSidebarRoot = (content) => {
+        const anchor = h('span', { ref: anchorRef, className: 'dsh-web-chat-slot-anchor', 'aria-hidden': 'true' });
+        if (createPortal === null) return content;
+        if (!portalState.ready) return anchor;
+        if (portalState.target === null) return h(React.Fragment, null, anchor, content);
+        return h(React.Fragment, null, anchor, createPortal(content, portalState.target));
+      };
       const list = useSessionList();
       const prefs = useUiPrefs();
       const [pendingDelete, setPendingDelete] = React.useState(null);
@@ -2693,10 +2747,12 @@ window.__ModuleLoader__.load({
       }, []);
       // 56px 轨道只放一个图标按钮。
       if (!wide) {
-        return h(
-          'button',
-          { type: 'button', className: 'dsh-web-chat-foot-icon', title: 'DeepSeek 会话区', 'aria-label': 'DeepSeek 会话区', onClick: () => openPage() },
-          h(PanelGlyph, { size: 20 }),
+        return renderInSidebarRoot(
+          h(
+            'button',
+            { type: 'button', className: 'dsh-web-chat-foot-icon', title: 'DeepSeek 会话区', 'aria-label': 'DeepSeek 会话区', onClick: () => openPage() },
+            h(PanelGlyph, { size: 20 }),
+          ),
         );
       }
       const sections = groupedSessionRows(list, search);
@@ -2808,12 +2864,15 @@ window.__ModuleLoader__.load({
                     'aria-label': row.groupId === '' ? '归入分组' : '移动分组',
                     onClick: (event) => {
                       event.stopPropagation();
+                      const scale = pageZoomScale();
                       const rect = event.currentTarget.getBoundingClientRect();
+                      const viewWidth = window.innerWidth / scale;
+                      const viewHeight = window.innerHeight / scale;
                       setGroupMenu({
                         sessionId: row.id,
                         groupId: row.groupId,
-                        left: Math.max(8, Math.min(rect.left - 8, window.innerWidth - 200)),
-                        top: Math.min(rect.bottom + 4, Math.max(8, window.innerHeight - 60 - prefs.groups.length * 32)),
+                        left: Math.max(8, Math.min(rect.left / scale - 8, viewWidth - 200)),
+                        top: Math.min(rect.bottom / scale + 4, Math.max(8, viewHeight - 60 - prefs.groups.length * 32)),
                       });
                     },
                   },
@@ -2919,14 +2978,16 @@ window.__ModuleLoader__.load({
         else renameGroup(groupForm.id, groupForm.name);
         setGroupForm(null);
       };
-      // 顶部模式切换开关（图二图三风格，order 2）、会话区主体（order 3）与用量余额行（order 4）拆成兄弟节点排序。
-      return h(
-        React.Fragment,
-        null,
-        h(SidebarTabSwitcher, {
-          activeTab: prefs.sidebarTab,
-          onSelectTab: (tab) => updateUiPrefs({ sidebarTab: tab }),
-        }),
+      // 顶部模式切换开关（图二图三风格，order 2）、会话区主体（order 3）与用量余额行（order 4）拆成兄弟节点排序，
+      // 通过 portal 挂载到侧栏根节点，避免被主题插件对页脚槽位的接管/隐藏规则吞掉。
+      return renderInSidebarRoot(
+        h(
+          React.Fragment,
+          null,
+          h(SidebarTabSwitcher, {
+            activeTab: prefs.sidebarTab,
+            onSelectTab: (tab) => updateUiPrefs({ sidebarTab: tab }),
+          }),
         h(
           'div',
           { className: 'dsh-web-chat-foot' + (prefs.sidebarTab === 'workspace' ? ' is-hidden-tab' : '') },
@@ -3238,6 +3299,7 @@ window.__ModuleLoader__.load({
         ),
         // 用量余额行：独立兄弟节点，经 CSS order 钉在工作区底部、设置行上方。
         h(UsageBalanceRow),
+        ),
       );
     }
 
@@ -3255,9 +3317,15 @@ window.__ModuleLoader__.load({
             publishAreaRect(null);
             return;
           }
+          const scale = pageZoomScale();
           const rect = element.getBoundingClientRect();
           if (rect.width > 0 && rect.height > 0) {
-            publishAreaRect({ left: rect.left, top: rect.top, width: rect.width, height: rect.height });
+            publishAreaRect({
+              left: rect.left / scale,
+              top: rect.top / scale,
+              width: rect.width / scale,
+              height: rect.height / scale,
+            });
           } else {
             publishAreaRect(null);
           }
@@ -3267,11 +3335,17 @@ window.__ModuleLoader__.load({
         };
         const observer = new ResizeObserver(schedule);
         observer.observe(element);
+        let zoomObserver = null;
+        if (typeof MutationObserver === 'function' && typeof document !== 'undefined' && document.body != null) {
+          zoomObserver = new MutationObserver(schedule);
+          zoomObserver.observe(document.body, { attributes: true, attributeFilter: ['data-dsh-claude-page-zoom'] });
+        }
         window.addEventListener('resize', schedule);
         const poll = window.setInterval(schedule, 600);
         schedule();
         return () => {
           observer.disconnect();
+          if (zoomObserver !== null) zoomObserver.disconnect();
           window.removeEventListener('resize', schedule);
           window.clearInterval(poll);
           if (frame !== 0) cancelAnimationFrame(frame);
@@ -3541,7 +3615,7 @@ window.__ModuleLoader__.load({
       '.dsh-web-chat-placeholder-text{font-size:12px;max-width:460px;text-align:center;line-height:1.7}',
       '.dsh-web-chat-spinner{width:22px;height:22px;border-radius:50%;border:2px solid var(--dsw-alias-border-l2,#d7dae0);border-top-color:var(--dsw-alias-brand-primary,#4d6bfe);animation:dsh-web-chat-spin .9s linear infinite}',
       '.dsh-web-chat-spinner.bad{border-top-color:var(--dsw-alias-state-error-primary,#dc2626)}',
-      '.dsh-web-chat-switcher-bar{order:2 !important;flex:0 0 auto !important;display:flex;align-items:center;box-sizing:border-box;width:100%;padding:4px 8px 4px 6px}',
+      '.dsh-web-chat-switcher-bar{order:1 !important;flex:0 0 auto !important;display:flex;align-items:center;box-sizing:border-box;width:100%;padding:4px 8px 4px 6px}',
       '.dsh-web-chat-switcher{display:inline-flex;align-items:center;box-sizing:border-box;padding:2px;border-radius:9999px;background:var(--dsw-alias-bg-layer-2,#e9ecef);border:1px solid var(--dsw-alias-border-l1,rgba(0,0,0,.06));user-select:none;gap:2px}',
       '.dsh-web-chat-switcher-item{display:inline-flex;align-items:center;justify-content:center;box-sizing:border-box;height:26px;padding:0 7px;border:1px solid transparent;border-radius:9999px;background:transparent;color:var(--dsw-alias-label-tertiary,#6b7280);font-family:inherit;font-size:13px;font-weight:500;line-height:1;cursor:pointer;outline:none;transition:all 180ms cubic-bezier(0.4,0,0.2,1);white-space:nowrap}',
       '.dsh-web-chat-switcher-item:hover:not(.active){color:var(--dsw-alias-label-primary,#1f2329);background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.04))}',
@@ -3551,20 +3625,25 @@ window.__ModuleLoader__.load({
       '.dsh-web-chat-switcher-item.active .dsh-web-chat-switcher-label{max-width:60px;opacity:1;margin-left:5px}',
       '.dsh-web-chat-switcher-item.tab-workspace.active{background:rgba(46,125,79,.1);border-color:#5e9575;color:#276749}',
       '.dsh-web-chat-switcher-item.tab-session.active{background:rgba(196,98,48,.1);border-color:#d9825b;color:#b85828}',
-      '[data-theme="dark"] .dsh-web-chat-switcher{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.1)}',
-      '[data-theme="dark"] .dsh-web-chat-switcher-item{color:var(--dsw-alias-label-tertiary,#8b93a3)}',
-      '[data-theme="dark"] .dsh-web-chat-switcher-item.tab-workspace.active{background:rgba(82,196,128,.16);border-color:#52c480;color:#52c480}',
-      '[data-theme="dark"] .dsh-web-chat-switcher-item.tab-session.active{background:rgba(224,122,74,.16);border-color:#e07a4a;color:#e07a4a}',
-      '.dsh-web-chat-foot{display:flex;flex-direction:column;flex:1 1 0px !important;order:3 !important;min-height:0 !important;width:100%;box-sizing:border-box;padding:0 0 4px;font-size:14px;line-height:20px}',
+      ':is([data-theme="dark"],[data-ds-dark-theme]) .dsh-web-chat-switcher{background:rgba(255,255,255,.08);border-color:rgba(255,255,255,.1)}',
+      ':is([data-theme="dark"],[data-ds-dark-theme]) .dsh-web-chat-switcher-item{color:var(--dsw-alias-label-tertiary,#8b93a3)}',
+      ':is([data-theme="dark"],[data-ds-dark-theme]) .dsh-web-chat-switcher-item.tab-workspace.active{background:rgba(82,196,128,.16);border-color:#52c480;color:#52c480}',
+      ':is([data-theme="dark"],[data-ds-dark-theme]) .dsh-web-chat-switcher-item.tab-session.active{background:rgba(224,122,74,.16);border-color:#e07a4a;color:#e07a4a}',
+      '.dsh-web-chat-slot-anchor{display:none !important}',
+      '.dsh-web-chat-foot{display:flex;flex-direction:column;flex:1 1 0px !important;order:2 !important;min-height:0 !important;width:100%;box-sizing:border-box;padding:0 0 4px;font-size:14px;line-height:20px}',
       '.dsh-web-chat-foot.is-hidden-tab{display:none !important}',
-      '[class*="footArea"]{display:contents !important}',
-      '[class*="footerActions"]{display:contents !important}',
+      '[class*="footArea"]{order:5 !important;flex:0 0 auto !important}',
+      '[class*="collapsed"] > [class*="footArea"]{margin-top:auto !important}',
+      '[data-windows-titlebar] [class*="collapsed"] .dsh-web-chat-foot-icon{display:none !important}',
       '[data-dsh-plugin="remote-bridge"]{display:none !important}',
-      '[class*="regionArea"]{order:3 !important;flex:1 1 0px !important;min-height:0 !important}',
-      'html:not([data-dsh-sidebar-tab="workspace"]) [class*="regionArea"]{display:none !important}',
+      ':is([class*="regionArea"],[data-dsh-claude-part~="region-area"]){display:flex !important;flex-direction:column !important;flex:1 1 0px !important;min-height:0 !important;order:3 !important}',
+      '[class*="scrollArea"]{grid-template-rows:8px max-content 2px minmax(0, 1fr) !important}',
+      'html[data-dsh-sidebar-tab="workspace"] :is([class*="regionArea"],[data-dsh-claude-part~="region-area"]) > *:not([class*="dsh-web-chat"]){order:2 !important;display:flex !important;flex-direction:column !important;flex:1 1 0px !important;min-height:0 !important}',
       'html[data-dsh-sidebar-tab="workspace"] .dsh-web-chat-foot{display:none !important}',
+      'html:not([data-dsh-sidebar-tab="workspace"]) :is([class*="regionArea"],[data-dsh-claude-part~="region-area"]) > *:not([class*="dsh-web-chat"]){display:none !important}',
+      'html:not([data-dsh-sidebar-tab="workspace"]) .dsh-web-chat-foot{order:2 !important;display:flex !important;flex-direction:column !important;flex:1 1 0px !important;min-height:0 !important}',
       '[class*="settingsArea"]{order:5 !important;flex:0 0 auto !important}',
-      '[class*="collapsed"] .dsh-web-chat-foot-icon{align-self:center}',
+      '[class*="collapsed"] .dsh-web-chat-foot-icon{order:2 !important;flex:0 0 auto;align-self:center;margin:0 0 12px}',
       '.dsh-web-chat-section-head{flex:0 0 auto;display:flex;align-items:center;gap:4px;box-sizing:border-box;height:36px;padding-left:4px;margin:2px 0 4px;color:var(--dsw-alias-label-tertiary,#8b93a3);user-select:none}',
       '.dsh-web-chat-section-head:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4d6bfe));outline-offset:-2px;border-radius:12px}',
       '.dsh-web-chat-section-label{flex:none;max-width:45%;min-width:0;overflow:hidden;white-space:nowrap;font-size:14px;line-height:20px;color:inherit;opacity:1;visibility:visible;transition:max-width 180ms var(--ds-ease-in-out,ease),opacity 120ms var(--ds-ease-in-out,ease),visibility 0s linear}',
@@ -3659,7 +3738,7 @@ window.__ModuleLoader__.load({
       '.dsh-web-chat-session-name{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}',
       '.dsh-web-chat-more-loading{flex:0 0 auto;display:flex;align-items:center;justify-content:center;padding:8px 0 4px}',
       '.dsh-web-chat-spin-dot{width:14px;height:14px;border-radius:50%;border:2px solid var(--dsw-alias-border-l2,#d7dae0);border-top-color:var(--dsw-alias-brand-primary,#4d6bfe);animation:dsh-web-chat-spin .9s linear infinite}',
-      '.dsh-web-chat-usage-bar{box-sizing:border-box;width:100%;flex:none;order:4;margin-top:2px;display:flex;align-items:center;justify-content:space-between;gap:6px;min-height:26px;padding:2px 8px;border:0;border-radius:var(--dsw-radius-md,8px);background:transparent;color:var(--dsw-alias-label-tertiary,#8b93a3);font-family:inherit;font-size:11px;line-height:16px;text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden}',
+      '.dsh-web-chat-usage-bar{box-sizing:border-box;width:100%;flex:0 0 auto !important;order:4 !important;margin-top:2px;display:flex;align-items:center;justify-content:space-between;gap:6px;min-height:26px;padding:2px 8px;border:0;border-radius:var(--dsw-radius-md,8px);background:transparent;color:var(--dsw-alias-label-tertiary,#8b93a3);font-family:inherit;font-size:11px;line-height:16px;text-align:left;cursor:pointer;white-space:nowrap;overflow:hidden}',
       '.dsh-web-chat-usage-bar:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(0,0,0,.06));color:var(--dsw-alias-label-secondary,#545b66)}',
       '.dsh-web-chat-usage-bar:focus-visible{outline:var(--dsw-focus-ring-width,2px) solid var(--dsw-focus-ring-color,var(--dsw-alias-state-business-primary,#4d6bfe));outline-offset:-2px}',
       '.dsh-web-chat-usage-seg{display:inline-flex;align-items:baseline;gap:3px;min-width:0}',
